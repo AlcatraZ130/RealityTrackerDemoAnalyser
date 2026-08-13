@@ -12,6 +12,64 @@
 
 "use strict";
 
+const EXCLUDE_NAMES = [
+    "ambstat", "ambStat", "amdStat", "e_samb",
+    "waterplane", "DefaultEnvMap", "waterfall", "fountain",
+    "e_destruction", "burning", "wreckfire"
+];
+
+const PROFILES = [
+    ["wallhigh01_32m",                            4,   32,    1.2 ],
+    ["wallhigh01_24m",                            4,   24,    1.2 ],
+    ["wallhigh01",                                4,    6,    1.2 ],
+    ["wallhigh02",                                5,    6,    1.2 ],
+    ["wallend",                                   4,    2,    1.2 ],
+    ["brickwall_broken_30m",                      2,   30,    1.0 ],
+    ["brickwall_broken_20m",                      2,   20,    1.0 ],
+    ["brickwall_broken",                          2,    5,    1.0 ],
+    ["brickwall_20m",                             3,   20,    1.0 ],
+    ["brickwall_30m",                             3,   30,    1.0 ],
+    ["brickwall_small",                           1.5,  2,    0.8 ],
+    ["brickwall",                                 3,    4,    1.0 ],
+    ["stonefence_10m",                            1.5, 10,    0.8 ],
+    ["stonefence_5m",                             1.5,  5,    0.8 ],
+    ["stonefence",                                1.5,  3,    0.8 ],
+    ["muttrah_stonewall_30m",                     3,   30,    1.2 ],
+    ["muttrah_stonewall_10m",                     3,   10,    1.2 ],
+    ["muttrah_stonewall",                         3,    4,    1.2 ],
+    ["fence_corrugated_3x72m",                    3,   72,    0.5 ],
+    ["fence_corrugated_3x48m",                    3,   48,    0.5 ],
+    ["fence_corrugated_3x36m",                    3,   36,    0.5 ],
+    ["fence_corrugated_3x24m",                    3,   24,    0.5 ],
+    ["fence_corrugated_3x12m",                    3,   12,    0.5 ],
+    ["fence_corrugated_6x12m",                    6,   12,    0.5 ],
+    ["fence_corrugated",                          3,    4,    0.5 ],
+    ["constructionfence",                         2,    4,    0.5 ],
+    ["hesco_l_05m",                               2.5,  5,    2.5 ],
+    ["hesco_l_10m",                               2.5, 10,    2.5 ],
+    ["hesco_l_20m",                               2.5, 20,    2.5 ],
+    ["hesco_l_50m",                               2.5, 50,    2.5 ],
+    ["hesco_low",                                 1.5,  4,    2.0 ],
+    ["hesco_sangar",                              2.5,  3,    3.0 ],
+    ["hesco",                                     2.5,  3,    2.5 ],
+    ["jersey_barrier",                            1.5,  3,    0.8 ],
+    ["conc_barrier",                              1.5,  3,    0.8 ],
+    ["pipeline_60m",                              1,   60,    2.0 ],
+    ["pipeline_30m",                              1,   30,    2.0 ],
+    ["pipeline",                                  1,   10,    2.0 ],
+    ["vw1a", 4, 12, 0.8], ["vw1b", 4, 12, 0.8],
+    ["vw2a", 4, 12, 0.8], ["vw2b", 4, 12, 0.8],
+    ["vw3_", 4, 12, 0.8], ["vw4_", 4, 12, 0.8], ["vw5b", 4, 12, 0.8],
+    ["vpa",  4, 12, 0.8], ["vpb",  4, 12, 0.8], ["vp2",  4, 12, 0.8],
+    ["mi_hangar",                                10,   28,    40 ],
+    ["office_building",                          12,   18,    24 ],
+    ["mosque",                                   14,   22,    28 ],
+    ["military_container",                        2.5,  2.5,   6 ],
+    ["truck_trailer",                             4,    3,    10 ],
+    ["xp2_oilsilo",                              15,   14,    15 ],
+    ["oilcistern",                               12,   10,    12 ]
+];
+
 class BuildingHeightmap {
     constructor() {
         this.initialized          = false;
@@ -20,6 +78,7 @@ class BuildingHeightmap {
         this.spatialCellSize      = 2;
         this.grid                 = null;
         this._meta                = null;
+        this.templateOverrides    = {};
         this.overrides            = {};
         this.pendingCustomObjects = [];
         this._mapKey              = null;
@@ -28,6 +87,35 @@ class BuildingHeightmap {
         this._footprintCacheBuilt = null;
         this._heightmapCacheCanvas = null;
         this._heightmapCacheMap    = null;
+    }
+
+    getTemplateKey(name) {
+        const lc = (name || "").toLowerCase();
+        return lc.replace(/_\d+/g, "").replace(/_v\d+/g, "").replace(/_nondest/g, "").replace(/_destructible/g, "");
+    }
+
+    classifyObject(name) {
+        const lc = (name || "").toLowerCase();
+        for (let i = 0; i < EXCLUDE_NAMES.length; i++) {
+            if (lc.includes(EXCLUDE_NAMES[i].toLowerCase())) return null;
+        }
+
+        // Tree / Palm / Bush Vegetation Objects
+        if (lc.includes("tree") || lc.includes("palm") || lc.includes("bush") || lc.includes("shrub") || lc.includes("birch") || lc.includes("pine") || lc.includes("oak") || lc.includes("jungle") || lc.includes("foliage") || lc.includes("almond") || lc.includes("hedge")) {
+            return { h: 6, w: 4, l: 4, isVegetation: true };
+        }
+
+        for (let i = 0; i < PROFILES.length; i++) {
+            const prof = PROFILES[i];
+            if (lc.includes(prof[0])) {
+                return { h: prof[1], w: prof[2], l: prof.length > 3 ? prof[3] : prof[2] };
+            }
+        }
+
+        if (lc.includes("wall") || lc.includes("fence") || lc.includes("barrier")) return { h: 3, w: 6, l: 1.0 };
+        if (lc.includes("house") || lc.includes("building") || lc.includes("bldg") || lc.includes("hangar") || lc.includes("store") || lc.includes("shelter")) return { h: 8, w: 12, l: 12 };
+        
+        return { h: 6, w: 8, l: 8 };
     }
 
     // Footprint lookup  -  1:1 match with MapCollisionEditor
@@ -150,6 +238,7 @@ class BuildingHeightmap {
 
         this.obbs    = [];
         this.spatialGrid.clear();
+        this.templateOverrides = {};
         this.overrides = {};
         this.pendingCustomObjects = [];
         this._footprintCacheBuilt = null;
@@ -164,6 +253,9 @@ class BuildingHeightmap {
             if (res && res.ok) {
                 const data = await res.json();
                 if (data) {
+                    if (data.templateOverrides) {
+                        this.templateOverrides = Object.assign({}, this.templateOverrides, data.templateOverrides);
+                    }
                     if (data.individualOverrides) {
                         this.overrides = Object.assign({}, this.overrides,
                             this._migrateOverridesToPosKey(data.individualOverrides));
@@ -261,8 +353,13 @@ class BuildingHeightmap {
     // Grid initializer
 
     _initGrid(config) {
-        const terrainSize = config ? parseInt(config.fullsize) : 1024;
-        const scaleX      = config ? parseFloat(config.scale.split("/")[0]) : 2;
+        let terrainSize = 1024;
+        let scaleX = 2;
+        if (config) {
+            if (config.fullsize) terrainSize = parseInt(config.fullsize);
+            if (config.scale && typeof config.scale === "string") scaleX = parseFloat(config.scale.split("/")[0]) || 2;
+            else if (typeof config.scale === "number") scaleX = config.scale;
+        }
         const terrainM    = terrainSize * scaleX;
         const cellSize    = 2;
         const gridSize    = Math.ceil(terrainM / cellSize);
@@ -278,19 +375,28 @@ class BuildingHeightmap {
 
     _addObject(obj) {
         if (!obj || !obj.name) return;
-        const lc = obj.name.toLowerCase();
+        const prof = this.classifyObject(obj.name);
+        if (!prof) return; // Skip excluded clutter objects
 
-        // Skip vegetation and pure-visual objects
-        if (lc.includes("tree")  || lc.includes("palm")    || lc.includes("bush")  ||
-            lc.includes("shrub") || lc.includes("birch")   || lc.includes("pine")  ||
-            lc.includes("oak")   || lc.includes("jungle")  || lc.includes("foliage") ||
-            lc.includes("almond") || lc.includes("hedge")  || lc.includes("ambstat") ||
-            lc.includes("amdstat") || lc.includes("e_samb") ||
-            lc.includes("waterplane") || lc.includes("waterfall") || lc.includes("fountain") ||
-            lc.includes("e_destruction") || lc.includes("burning") || lc.includes("wreckfire"))
-            return;
+        const exactName = (obj.name || "").toLowerCase();
+        const tplKey = this.getTemplateKey(obj.name);
 
-        // Resolve override
+        let width = prof.w;
+        let length = prof.l;
+        let height = prof.h !== undefined ? prof.h : 6.0;
+        let posX = obj.x, posZ = obj.z, yaw = obj.yaw || 0;
+        let scaleX = 1.0, scaleZ = 1.0;
+        let customPolygon = null;
+
+        // Apply template override if present
+        const tplOvr = this.templateOverrides[exactName] || this.templateOverrides[tplKey];
+        if (tplOvr) {
+            if (tplOvr.width !== undefined) width = parseFloat(tplOvr.width);
+            if (tplOvr.length !== undefined) length = parseFloat(tplOvr.length);
+            if (tplOvr.height !== undefined) height = parseFloat(tplOvr.height);
+        }
+
+        // Individual override takes precedence
         const posKey       = this._getPosKey(obj.name, obj.x, obj.z);
         const roundedKey   = `${obj.name}_${Math.round(obj.x)}_${Math.round(obj.z)}`;
         const floorKey     = `${obj.name}_${Math.floor(obj.x)}_${Math.floor(obj.z)}`;
@@ -298,11 +404,6 @@ class BuildingHeightmap {
         const ovr = this.overrides[posKey] || this.overrides[roundedKey] || this.overrides[floorKey] || this.overrides[rawStringKey];
 
         if (ovr && ovr.hidden) return;
-
-        let posX = obj.x, posZ = obj.z, yaw = obj.yaw || 0;
-        let width = 6, length = 6, height = 6;
-        let scaleX = 1.0, scaleZ = 1.0;
-        let customPolygon = null;
 
         if (ovr) {
             if (ovr.x         !== undefined) posX   = ovr.x;
@@ -340,8 +441,8 @@ class BuildingHeightmap {
                 if (Math.abs(px) > maxAbsX) maxAbsX = Math.abs(px);
                 if (Math.abs(pz) > maxAbsZ) maxAbsZ = Math.abs(pz);
             }
-            if (!ovr || ovr.width  === undefined) width  = (maxAbsX * 2) || 6;
-            if (!ovr || ovr.length === undefined) length = (maxAbsZ * 2) || 6;
+            if (!ovr || ovr.width  === undefined) width  = (maxAbsX * 2) || width;
+            if (!ovr || ovr.length === undefined) length = (maxAbsZ * 2) || length;
         }
 
         if (fpH != null && (!ovr || ovr.height === undefined)) {
@@ -361,7 +462,8 @@ class BuildingHeightmap {
             minY:  fpMinY != null ? (baseY + fpMinY) : baseY,
             maxY:  fpMaxY != null ? (baseY + fpMaxY) : (baseY + height),
             hidden: false,
-            customPolygon: customPolygon || null
+            customPolygon: customPolygon || null,
+            isVegetation: !!prof.isVegetation
         };
 
         this.obbs.push(obb);
@@ -514,6 +616,10 @@ class BuildingHeightmap {
                 ctx.strokeStyle = "#a855f7";
                 ctx.fillStyle   = "rgba(168, 85, 247, 0.20)";
                 ctx.lineWidth   = 1.5;
+            } else if (obb.isVegetation) {
+                ctx.strokeStyle = "#10b981";
+                ctx.fillStyle   = "rgba(16, 185, 129, 0.15)";
+                ctx.lineWidth   = 1.0;
             } else {
                 ctx.strokeStyle = "#00e5ff";
                 ctx.fillStyle   = "rgba(0, 229, 255, 0.10)";
@@ -625,7 +731,7 @@ class BuildingHeightmap {
     }
 
     checkRayPolygonIntersection(p1, p2, obb) {
-        if (!obb || obb.hidden) return null;
+        if (!obb || obb.hidden || obb.isVegetation) return null;
 
         const rad = -obb.yaw * Math.PI / 180;
         const cosR = Math.cos(rad), sinR = Math.sin(rad);
@@ -732,7 +838,7 @@ class BuildingHeightmap {
             if (list) {
                 for (let i = 0; i < list.length; i++) {
                     const obb = list[i];
-                    if (checked.has(obb.id) || obb.hidden) continue;
+                    if (checked.has(obb.id) || obb.hidden || obb.isVegetation) continue;
                     checked.add(obb.id);
 
                     const hit = this.checkRayPolygonIntersection(p1, p2, obb);
@@ -785,3 +891,7 @@ class BuildingHeightmap {
 
 // Global singleton
 var buildingHeightmap = new BuildingHeightmap();
+if (typeof window !== "undefined") {
+    window.BuildingHeightmap = BuildingHeightmap;
+    window.buildingHeightmap = buildingHeightmap;
+}
