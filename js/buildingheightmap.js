@@ -317,7 +317,21 @@ class BuildingHeightmap {
                 customPolygon = ovr.customPolygon;
         }
 
-        const fp = customPolygon || this._getFootprint(obj.name);
+        const rawFp = customPolygon || this._getFootprint(obj.name);
+        let fp = null;
+        let fpH = null;
+        let fpMinY = null;
+        let fpMaxY = null;
+
+        if (Array.isArray(rawFp)) {
+            fp = rawFp;
+        } else if (rawFp && typeof rawFp === "object") {
+            fp = rawFp.poly;
+            fpH = rawFp.h;
+            fpMinY = rawFp.minY;
+            fpMaxY = rawFp.maxY;
+        }
+
         if (fp && fp.length >= 3) {
             let maxAbsX = 0, maxAbsZ = 0;
             for (let i = 0; i < fp.length; i++) {
@@ -330,17 +344,22 @@ class BuildingHeightmap {
             if (!ovr || ovr.length === undefined) length = (maxAbsZ * 2) || 6;
         }
 
+        if (fpH != null && (!ovr || ovr.height === undefined)) {
+            height = fpH;
+        }
+
+        const baseY = obj.y || 0;
         const obb = {
             id: this.obbs.length,
             name: obj.name,
             ns_originalPosKey: posKey,
-            x: posX, y: obj.y || 0, z: posZ,
+            x: posX, y: baseY, z: posZ,
             yaw, width, length, height,
             scaleX, scaleZ,
             halfW: (width  / 2) * scaleX,
             halfL: (length / 2) * scaleZ,
-            minY:  obj.y  || 0,
-            maxY:  (obj.y || 0) + height,
+            minY:  fpMinY != null ? (baseY + fpMinY) : baseY,
+            maxY:  fpMaxY != null ? (baseY + fpMaxY) : (baseY + height),
             hidden: false,
             customPolygon: customPolygon || null
         };
@@ -355,21 +374,33 @@ class BuildingHeightmap {
         if (!this.pendingCustomObjects || !this.pendingCustomObjects.length) return;
         const seen = new Set(this.obbs.filter(o => o.isCustom).map(o => `${o.name}_${o.x}_${o.z}`));
         for (const c of this.pendingCustomObjects) {
-            const fp = `${c.name}_${c.x}_${c.z}`;
-            if (seen.has(fp)) continue;
-            seen.add(fp);
+            const fpKey = `${c.name}_${c.x}_${c.z}`;
+            if (seen.has(fpKey)) continue;
+            seen.add(fpKey);
+
+            const rawFp = c.customPolygon || this._getFootprint(c.name);
+            let fpH = c.height;
+            let fpMinY = null, fpMaxY = null;
+            if (rawFp && typeof rawFp === "object" && !Array.isArray(rawFp)) {
+                if (fpH === undefined && rawFp.h != null) fpH = rawFp.h;
+                fpMinY = rawFp.minY;
+                fpMaxY = rawFp.maxY;
+            }
+
+            const cBaseY = c.y || 0;
+            const cHeight = fpH || 6;
             const obb = {
                 id: this.obbs.length,
                 name: c.name, isCustom: true,
                 ns_originalPosKey: this._getPosKey(c.name, c.x, c.z),
-                x: c.x, y: c.y || 0, z: c.z,
+                x: c.x, y: cBaseY, z: c.z,
                 yaw: c.yaw || 0,
-                width: c.width || 6, length: c.length || 6, height: c.height || 6,
+                width: c.width || 6, length: c.length || 6, height: cHeight,
                 scaleX: c.scaleX || 1.0, scaleZ: c.scaleZ || 1.0,
                 halfW: ((c.width  || 6) / 2) * (c.scaleX || 1.0),
                 halfL: ((c.length || 6) / 2) * (c.scaleZ || 1.0),
-                minY:  c.y || 0,
-                maxY:  (c.y || 0) + (c.height || 6),
+                minY:  fpMinY != null ? (cBaseY + fpMinY) : cBaseY,
+                maxY:  fpMaxY != null ? (cBaseY + fpMaxY) : (cBaseY + cHeight),
                 hidden: !!c.hidden,
                 customPolygon: (c.customPolygon && c.customPolygon.length >= 3) ? c.customPolygon : null
             };
@@ -558,24 +589,26 @@ class BuildingHeightmap {
     }
 
     drawLOSCollisionPoints(ctx) {
-        if (!options_DrawLOSCollisionPoints || devTestCollisionPoints.length === 0) return;
+        if (!options_DrawLOSCollisionPoints || !devTestCollisionPoints || devTestCollisionPoints.length === 0) return;
         ctx.save();
-        for (const pt of devTestCollisionPoints) {
+        for (let i = 0; i < devTestCollisionPoints.length; i++) {
+            const pt = devTestCollisionPoints[i];
+            const cx = XtoCanvas(pt.x);
+            const cy = YtoCanvas(pt.z);
+
             ctx.fillStyle = pt.type === "building" ? "#ff1744" : "#ffea00";
             ctx.beginPath();
-            ctx.arc(XtoCanvas(pt.x), YtoCanvas(pt.z), 3.5, 0, Math.PI * 2);
+            ctx.arc(cx, cy, 3, 0, Math.PI * 2);
             ctx.fill();
         }
         ctx.restore();
-        if (devTestCollisionPoints.length > 200)
-            devTestCollisionPoints.splice(0, devTestCollisionPoints.length - 200);
     }
 
-    // LOS Raycasting  -  Fast 2D Vector Polygon Collision Engine
+    // LOS Raycasting  -  Fast 2D/3D Vector Polygon Collision Engine
 
     _intersectSegmentSegment(Ax, Az, Bx, Bz, Cx, Cz, Dx, Dz) {
         const det = (Bx - Ax) * (Dz - Cz) - (Bz - Az) * (Dx - Cx);
-        if (Math.abs(det) < 1e-9) return null;
+        if (det === 0) return null;
         const t = ((Cx - Ax) * (Dz - Cz) - (Cz - Az) * (Dx - Cx)) / det;
         const u = ((Cx - Ax) * (Bz - Az) - (Cz - Az) * (Bx - Ax)) / det;
         return (t >= 0 && t <= 1 && u >= 0 && u <= 1) ? t : null;
@@ -606,7 +639,8 @@ class BuildingHeightmap {
         const lx2 = (dx2 * cosR - dz2 * sinR) / sx;
         const lz2 = (dx2 * sinR + dz2 * cosR) / sz;
 
-        let poly = obb.customPolygon || this._getFootprint(obb.name);
+        const rawFp = obb.customPolygon || this._getFootprint(obb.name);
+        let poly = (rawFp && rawFp.poly) ? rawFp.poly : rawFp;
         if (!poly || poly.length < 3) {
             const hw = obb.halfW / sx, hl = obb.halfL / sz;
             poly = [{x: -hw, z: -hl}, {x: hw, z: -hl}, {x: hw, z: hl}, {x: -hw, z: hl}];
@@ -650,6 +684,12 @@ class BuildingHeightmap {
             const hitX = p1.x + (p2.x - p1.x) * closestT;
             const hitZ = p1.z + (p2.z - p1.z) * closestT;
             const hitY = p1.y + (p2.y - p1.y) * closestT;
+
+            // 3D Height Check: If the ray flies above the top or below the bottom of the object, NO COLLISION!
+            if (hitY > obb.maxY || hitY < obb.minY) {
+                return null;
+            }
+
             return {
                 t: closestT,
                 hitX: hitX,
@@ -718,16 +758,17 @@ class BuildingHeightmap {
         return closestHit;
     }
 
-    hasBuildingLOS(x1, y1, z1, x2, y2, z2, eyeHeight) {
+    hasBuildingLOS(x1, y1, z1, x2, y2, z2, eyeHeight = 1.65) {
         if (!this.initialized || this.obbs.length === 0) return true;
-        const eye = (eyeHeight !== undefined) ? eyeHeight : 0;
+        const eye = (eyeHeight !== undefined) ? eyeHeight : 1.65;
         const res = this._rayMarch(x1, y1 + eye, z1, x2, y2 + eye, z2, hit => true);
         return res !== true; // Returns true (CLEAR) when no building hit (null), false (BLOCKED) when hit (true)
     }
 
-    getRayCollision(x1, y1, z1, x2, y2, z2) {
+    getRayCollision(x1, y1, z1, x2, y2, z2, eyeHeight = 1.65) {
         if (!this.initialized || this.obbs.length === 0) return null;
-        const hit = this._rayMarch(x1, y1, z1, x2, y2, z2, hit => undefined);
+        const eye = (eyeHeight !== undefined) ? eyeHeight : 1.65;
+        const hit = this._rayMarch(x1, y1 + eye, z1, x2, y2 + eye, z2, hit => undefined);
         return hit || null;
     }
 
