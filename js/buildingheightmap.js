@@ -46,7 +46,7 @@ class BuildingHeightmap {
         const seen = new Set();
 
         for (let i = 0; i < objects.length; i++) {
-            const lower = (objects[i].name || "").toLowerCase();
+            const lower = (objects[i].name || objects[i][0] || "").toLowerCase();
             if (seen.has(lower)) continue;
             seen.add(lower);
 
@@ -455,7 +455,8 @@ class BuildingHeightmap {
 
         let modelPoints = obb.customPolygon;
         if (!modelPoints) {
-            modelPoints = this._getFootprint(obb.name);
+            const rawFp = this._getFootprint(obb.name);
+            modelPoints = (rawFp && rawFp.poly) ? rawFp.poly : rawFp;
         }
 
         if (!modelPoints || modelPoints.length < 3) {
