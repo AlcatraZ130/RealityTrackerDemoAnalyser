@@ -1593,14 +1593,6 @@ function intelChanged(FullMessage)
 	intel = FullMessage.getInt8(1,true)
 }
 
-
-var SquadNames = {}
-function SquadName(FullMessage)
-{
-	const unpacked = FullMessage.unPack(1,"BBs")
-	SquadNames[unpacked[1][0] + unpacked[1][1]] = unpacked[1][2]
-}
-
 //Event Message Handlers 
 $(() => 
 {

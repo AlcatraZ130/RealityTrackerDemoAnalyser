@@ -389,11 +389,13 @@ class BuildingHeightmap {
         let customPolygon = null;
 
         // Apply template override if present
+        let ignoreLOS = false;
         const tplOvr = this.templateOverrides[exactName] || this.templateOverrides[tplKey];
         if (tplOvr) {
             if (tplOvr.width !== undefined) width = parseFloat(tplOvr.width);
             if (tplOvr.length !== undefined) length = parseFloat(tplOvr.length);
             if (tplOvr.height !== undefined) height = parseFloat(tplOvr.height);
+            if (tplOvr.ignoreLOS !== undefined) ignoreLOS = !!tplOvr.ignoreLOS;
         }
 
         // Individual override takes precedence
@@ -416,6 +418,7 @@ class BuildingHeightmap {
             if (ovr.scaleZ    !== undefined) scaleZ = ovr.scaleZ;
             if (ovr.customPolygon && Array.isArray(ovr.customPolygon) && ovr.customPolygon.length >= 3)
                 customPolygon = ovr.customPolygon;
+            if (ovr.ignoreLOS !== undefined) ignoreLOS = !!ovr.ignoreLOS;
         }
 
         const rawFp = customPolygon || this._getFootprint(obj.name);
@@ -463,6 +466,7 @@ class BuildingHeightmap {
             maxY:  fpMaxY != null ? (baseY + fpMaxY) : (baseY + height),
             hidden: false,
             customPolygon: customPolygon || null,
+            ignoreLOS: ignoreLOS,
             isVegetation: !!prof.isVegetation
         };
 
@@ -504,7 +508,8 @@ class BuildingHeightmap {
                 minY:  fpMinY != null ? (cBaseY + fpMinY) : cBaseY,
                 maxY:  fpMaxY != null ? (cBaseY + fpMaxY) : (cBaseY + cHeight),
                 hidden: !!c.hidden,
-                customPolygon: (c.customPolygon && c.customPolygon.length >= 3) ? c.customPolygon : null
+                customPolygon: (c.customPolygon && c.customPolygon.length >= 3) ? c.customPolygon : null,
+                ignoreLOS: !!c.ignoreLOS
             };
             this.obbs.push(obb);
             this._rasterizeObb(obb);
@@ -514,7 +519,7 @@ class BuildingHeightmap {
     // Rasterizer  -  spatial/heightmap grid
 
     _rasterizeObb(obb) {
-        if (!obb || obb.hidden) return;
+        if (!obb || obb.hidden || obb.ignoreLOS) return;
         if (this.grid && this._meta) {
             const { origin, cellSize, gridSize } = this._meta;
             const maxR = Math.hypot(obb.halfW, obb.halfL);
@@ -600,7 +605,9 @@ class BuildingHeightmap {
 
             const cx = XtoCanvas(obb.x);
             const cy = YtoCanvas(obb.z);
-            if (cx < -150 || cx > ctx.canvas.width + 150 || cy < -150 || cy > ctx.canvas.height + 150) continue;
+            const radM = Math.max(obb.width || 8, obb.length || 8) * Math.max(obb.scaleX || 1.0, obb.scaleZ || 1.0);
+            const radCanvas = (typeof MapSize !== "undefined" && typeof MapImageDrawSize !== "undefined") ? (radM / MapSize) * MapImageDrawSize + 150 : 200;
+            if (cx < -radCanvas || cx > ctx.canvas.width + radCanvas || cy < -radCanvas || cy > ctx.canvas.height + radCanvas) continue;
 
             const poly = this._getObbCanvasPolygon(obb);
             if (!poly || poly.length < 3) continue;
@@ -612,7 +619,11 @@ class BuildingHeightmap {
             }
             ctx.closePath();
 
-            if (obb.isCustom) {
+            if (obb.ignoreLOS) {
+                ctx.strokeStyle = "#ec4899"; // Pink / Rose (Transparent)
+                ctx.fillStyle   = "rgba(236, 72, 153, 0.20)";
+                ctx.lineWidth   = 1.5;
+            } else if (obb.isCustom) {
                 ctx.strokeStyle = "#a855f7";
                 ctx.fillStyle   = "rgba(168, 85, 247, 0.20)";
                 ctx.lineWidth   = 1.5;
@@ -731,7 +742,7 @@ class BuildingHeightmap {
     }
 
     checkRayPolygonIntersection(p1, p2, obb) {
-        if (!obb || obb.hidden || obb.isVegetation) return null;
+        if (!obb || obb.hidden || obb.ignoreLOS) return null;
 
         const rad = -obb.yaw * Math.PI / 180;
         const cosR = Math.cos(rad), sinR = Math.sin(rad);
@@ -838,7 +849,7 @@ class BuildingHeightmap {
             if (list) {
                 for (let i = 0; i < list.length; i++) {
                     const obb = list[i];
-                    if (checked.has(obb.id) || obb.hidden || obb.isVegetation) continue;
+                    if (checked.has(obb.id) || obb.hidden || obb.ignoreLOS) continue;
                     checked.add(obb.id);
 
                     const hit = this.checkRayPolygonIntersection(p1, p2, obb);
