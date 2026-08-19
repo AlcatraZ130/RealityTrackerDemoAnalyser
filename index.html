@@ -42,7 +42,6 @@
 	<script src="js/playerhistory.js"></script>
 	<script src="js/demoanalyser.js"></script>
 	<script src="js/flankchrono.js"></script>
-	<script src="js/attentionheatmap.js"></script>
 	<script src="js/analysertimeline.js"></script>
 	<script src="js/analyserpreload.js"></script>
 	<!-- <script src="js/immutable.min.js"></script> -->
@@ -378,6 +377,9 @@
 						<input type="checkbox" id="options_drawAllOrderIcons" onclick="checkboxClicked(this)">
 						Orders
 						<br>
+						<input type="checkbox" checked="" id="options_Interpolation" onclick="checkboxClicked(this)" title="Interpola suavemente las posiciones y ángulos entre ticks. En demos de alta frecuencia se puede apagar para ver los frames 100% reales del servidor.">
+						Interpolation (Smooth) <span id="lblDemoTickrateBadge" style="font-size: 10px; font-weight: bold; color: #38bdf8; margin-left: 2px; padding: 1px 4px; background: rgba(56, 189, 248, 0.12); border-radius: 3px;">[3.0 Hz]</span>
+						<br>
 						<input type="checkbox" id="options_UseFallbackRenderer" onclick="checkboxClicked(this)">
 						Use Fallback Renderer
 						<br>
@@ -403,7 +405,6 @@
 						</div>
 						<label title="Tracks enemy FOBs, players, and vehicles marked by squad leader orders within time and distance thresholds and displays a red Spotted ring."><input type="checkbox" checked="" id="options_DrawSpottedIndicators" onclick="checkboxClicked(this)"> Orders & Spotted Tracking</label><br>
 						<label title="Creates a 150m radius zone around the selected player and shows a timer in seconds above nearby enemies to measure response time to threats."><input type="checkbox" id="options_DrawFlankChronometer" onclick="checkboxClicked(this)"> Engagement Timer</label><br>
-						<label title="Shows a heatmap overlay of where the player spent most of their time looking."><input type="checkbox" id="options_DrawAttentionHeatmap" onclick="checkboxClicked(this)"> Vision Heatmap</label><br>
 						<label title="Displays a timeline track of engagements and events for the selected player at the bottom of the screen."><input type="checkbox" id="options_DrawTimeline" onclick="checkboxClicked(this)"> Timeline</label><br>
 						<label title="Shows footstep sound radii based on player speed (12m crouch, 20m walk, 35m sprint) and vehicle engine sound states (idle, moving, ignition)."><input type="checkbox" id="options_DrawMovementSoundAuras" onclick="checkboxClicked(this)"> Movement Sound Radii</label><br>
 						<label title="Displays expanding sound wave shockwaves when players shoot or hit targets (300m small arms, 750m 30mm cannons, 1500m tank main guns)."><input type="checkbox" id="options_DrawShootingSoundShockwaves" onclick="checkboxClicked(this)"> Shooting Sound Shockwaves</label><br>
@@ -421,6 +422,7 @@
 						<b id="lblAnalyserToolsHeader">Analyser Tools & Debug</b><br>
 						<label title="Shows real-time calculated movement speed (km/h) and stance/acoustic state for the selected player or vehicle."><input type="checkbox" id="options_ShowSelectionSpeed" checked onclick="checkboxClicked(this)"> Selected Entity Speed & Acoustic State</label><br>
 						<label title="Shows real 2D vector footprints of static objects (buildings, walls, structures) extracted from the game's 3D collision meshes."><input type="checkbox" id="options_DrawBuildingWireframes" checked onclick="checkboxClicked(this); buildingHeightmap.toggleObbEditorPanel();"> Building Footprints</label><br>
+
 						<label title="Superimposes a colorized heightmap terrain grid over the map to verify elevation."><input type="checkbox" id="options_DrawHeightmapOverlay" onclick="checkboxClicked(this)"> Heightmap Overlay</label><br>
 						<label title="Projects an independent 4km (4000m) Raycast laser from the selected player that detects and stops at exact 2D building walls and terrain heightmap elevations."><input type="checkbox" id="options_Draw4KmLaser" onclick="checkboxClicked(this)"> 4km Independent LOS Laser</label><br>
 

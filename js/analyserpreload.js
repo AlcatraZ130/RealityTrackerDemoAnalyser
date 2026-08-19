@@ -3,24 +3,20 @@
 
 "use strict";
 
-// Automatic pre-analysis pass for Vision Heatmap and Analyser Timeline markers.
+// Automatic pre-analysis pass for BVR Focus Timers, Timeline markers and No-LOS Kills.
 
 class AnalyserPreloader {
 	constructor() {
 		this.isRunning = false;
-		this.cellSize = 50;
-		this.rayLength = 4000;
-		this.rayStep = 50;
 	}
 
 	requested() {
-		return true; // Always active by default
+		return true;
 	}
 
 	resetResults() {
 		if (typeof analyserTimeline !== "undefined") analyserTimeline.resetAnalysis();
 		if (typeof noLOSKills !== "undefined") noLOSKills.length = 0;
-		if (typeof heatmapCache !== "undefined") heatmapCache.clear();
 		this.preloaderFocusMap = new Map();
 		this.playerMaxFocusMap = new Map();
 		this.playerTotalFocusMap = new Map();
@@ -49,34 +45,48 @@ class AnalyserPreloader {
 		this.isRunning = true;
 		this.resetResults();
 		const config = { range: Number(options_VisionConeRange), cone: Number(options_VisionConeAngle), speed: Number(options_SnapMinSpeed) };
-		const states = new Map(), heatmaps = new Map(), killsByTick = new Map();
+		const states = new Map(), killsByTick = new Map();
 		const preloaderFocusMap = this.preloaderFocusMap, playerMaxFocusMap = this.playerMaxFocusMap, playerTotalFocusMap = this.playerTotalFocusMap;
 		for (const kill of eventArrays.kills.events) {
 			const tick = kill.tick != null ? kill.tick : kill.Tick;
 			if (!killsByTick.has(tick)) killsByTick.set(tick, []);
 			killsByTick.get(tick).push(kill);
 		}
+
+		const hz = (typeof DetectedDemoHz !== "undefined" && DetectedDemoHz > 0) ? DetectedDemoHz : 3.0;
+		// Sample focus at ~1.5 Hz regardless of demo tickrate
+		const stride = Math.max(1, Math.round(hz / 1.5));
+		const timePerSampleSec = (1.0 / hz) * stride;
+
 		let index = 0, tick = 0;
-		const total = messageArrayObject.messages.length, chunkSize = 100;
-		setLoadingOverlayText("Preloading Analyser data: 0%...");
+		const total = messageArrayObject.messages.length;
+		setLoadingOverlayText("Analysing Tactical Data: 0%...");
 
 		const part = () => {
-			const end = Math.min(index + chunkSize, total);
-			for (; index < end; index++) {
+			const batchStart = performance.now();
+			while (index < total) {
 				const message = messageArrayObject.getMessageAt(index);
-				if (!message) continue;
-				if (message.getUint8(0) === MESSAGETYPE.PLAYER_UPDATE) this.readPlayers(message, states);
-				else if (message.getUint8(0) === MESSAGETYPE.TICK) {
-					this.analyzeTick(tick, states, heatmaps, killsByTick.get(tick) || [], config, preloaderFocusMap, playerMaxFocusMap, playerTotalFocusMap);
-					tick++;
+				if (message) {
+					const mType = message.getUint8(0);
+					if (mType === MESSAGETYPE.PLAYER_UPDATE) {
+						this.readPlayers(message, states);
+					} else if (mType === MESSAGETYPE.TICK) {
+						this.analyzeTick(tick, states, killsByTick.get(tick) || [], config, preloaderFocusMap, playerMaxFocusMap, playerTotalFocusMap, stride, timePerSampleSec);
+						tick++;
+					}
+				}
+				index++;
+
+				if ((index & 2047) === 0 && (performance.now() - batchStart > 24)) {
+					break;
 				}
 			}
+
 			if (index < total) {
-				setLoadingOverlayText("Preloading Analyser data: " + Math.floor(index * 100 / total) + "%...");
+				const pct = Math.floor(index * 100 / total);
+				setLoadingOverlayText(`Analysing Tactical Data: ${pct}%...`);
 				setTimeout(part, 0);
 			} else {
-				for (const [id, data] of heatmaps)
-					heatmapCache.set(attentionHeatmap.getCacheKey(id), data);
 				if (typeof killfeed_ApplyNoLOSMarkers === "function") killfeed_ApplyNoLOSMarkers();
 
 				this.playerStates = states;
@@ -91,7 +101,7 @@ class AnalyserPreloader {
 	}
 
 	state(states, id) {
-		if (!states.has(id)) states.set(id, { id, team: 0, X: 0, Y: 0, Z: 0, rotation: 0, alive: false, position: false, rotationKnown: false, previousRotation: null, history: [] });
+		if (!states.has(id)) states.set(id, { id, team: 0, X: 0, Y: 0, Z: 0, rotation: 0, alive: false, position: false, rotationKnown: false, history: [] });
 		return states.get(id);
 	}
 
@@ -124,52 +134,67 @@ class AnalyserPreloader {
 		}
 	}
 
-	analyzeTick(tick, states, heatmaps, kills, config, preloaderFocusMap, playerMaxFocusMap, playerTotalFocusMap) {
+	analyzeTick(tick, states, kills, config, preloaderFocusMap, playerMaxFocusMap, playerTotalFocusMap, stride, timePerSampleSec) {
+		const shouldSampleFocus = (tick % stride === 0);
 		const activePlayers = [];
+
 		for (const p of states.values()) {
 			if (!p.position) continue;
 			p.history.push({ tick, X: p.X, Y: p.Y, Z: p.Z, rotation: p.rotation, alive: p.alive });
 			if (p.history.length > MO_WINDOW_TICKS) p.history.shift();
-			if (p.alive) {
-				this.heat(p, heatmaps);
-				if (p.rotationKnown) activePlayers.push(p);
+
+			if (p.alive && shouldSampleFocus && p.rotationKnown) {
+				activePlayers.push(p);
 			}
-			p.previousRotation = p.rotation;
 		}
 
-		if (preloaderFocusMap && playerMaxFocusMap && activePlayers.length > 1) {
+		if (shouldSampleFocus && preloaderFocusMap && playerMaxFocusMap && activePlayers.length > 1) {
 			for (let i = 0; i < activePlayers.length; i++) {
 				const p = activePlayers[i];
+				const r = p.rotation * (Math.PI / 180);
+				const sinR = Math.sin(r);
+				const cosR = Math.cos(r);
+				const halfConeDeg = config.cone / 2;
+
 				for (let j = 0; j < activePlayers.length; j++) {
 					const other = activePlayers[j];
 					if (p === other || p.team === other.team) continue;
 
-					const worldDist = Math.hypot(other.X - p.X, other.Z - p.Z);
+					const dx = other.X - p.X;
+					const dz = other.Z - p.Z;
+					const worldDist = Math.hypot(dx, dz);
 					if (worldDist <= 10 || worldDist > 4000) continue;
 
-					const result = this.angle(p, other);
-					const perpDist = worldDist * Math.sin(result.angle * Math.PI / 180);
+					const dot = (sinR * dx + cosR * dz) / worldDist;
+					if (dot <= 0) continue; // Enemy is behind
 
-					if (perpDist <= 25.0 && result.angle <= (config.cone / 2)) {
+					const angleDeg = Math.acos(Math.max(-1, Math.min(1, dot))) * (180 / Math.PI);
+					if (angleDeg > halfConeDeg) continue;
+
+					const perpDist = worldDist * Math.sin(angleDeg * (Math.PI / 180));
+					if (perpDist <= 25.0) {
 						const key = `${p.id}_${other.id}`;
-						const ticks = (preloaderFocusMap.get(key) || 0) + 1;
-						preloaderFocusMap.set(key, ticks);
+						const currentSec = (preloaderFocusMap.get(key) || 0) + timePerSampleSec;
+						preloaderFocusMap.set(key, currentSec);
 
-						const sec = ticks * 0.04;
-						if (!playerMaxFocusMap.has(p.id) || sec > playerMaxFocusMap.get(p.id)) {
-							playerMaxFocusMap.set(p.id, sec);
+						if (!playerMaxFocusMap.has(p.id) || currentSec > playerMaxFocusMap.get(p.id)) {
+							playerMaxFocusMap.set(p.id, currentSec);
 						}
 
 						if (playerTotalFocusMap) {
 							const currentTotal = playerTotalFocusMap.get(p.id) || 0;
-							playerTotalFocusMap.set(p.id, currentTotal + 0.04);
+							playerTotalFocusMap.set(p.id, currentTotal + timePerSampleSec);
 						}
 					}
 				}
 			}
 		}
 
-		for (const kill of kills) { if (typeof analyserTimeline !== "undefined") analyserTimeline.recordKill(kill); this.kill(kill, states, config); }
+		// Kills evaluated with 100% full precision
+		for (const kill of kills) {
+			if (typeof analyserTimeline !== "undefined") analyserTimeline.recordKill(kill);
+			this.kill(kill, states, config);
+		}
 	}
 
 	angle(a, b) {
@@ -199,18 +224,6 @@ class AnalyserPreloader {
 				noLOSKills.push({ tick: kill.tick != null ? kill.tick : kill.Tick, attackerId: kill.AttackerID, victimId: kill.VictimID, attackerName: kill.AttackerName, victimName: kill.VictimName, weapon: kill.Weapon, reason: "no_los_kill" });
 			}
 		}
-	}
-
-	heat(p, heatmaps) {
-		if (!heatmaps.has(p.id)) heatmaps.set(p.id, { visionGrid: new Map(), maxVisionWeight: 0 });
-		const data = heatmaps.get(p.id), add = (grid, x, z) => {
-			const key = Math.floor(x / this.cellSize) + "," + Math.floor(z / this.cellSize), value = (grid.get(key) || 0) + 1;
-			grid.set(key, value); return value;
-		};
-		if (!p.rotationKnown) return;
-		const r = p.rotation * Math.PI / 180;
-		for (let d = this.rayStep; d <= this.rayLength; d += this.rayStep)
-			data.maxVisionWeight = Math.max(data.maxVisionWeight, add(data.visionGrid, p.X + Math.sin(r) * d, p.Z + Math.cos(r) * d));
 	}
 }
 

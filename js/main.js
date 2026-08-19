@@ -47,6 +47,7 @@ var options_health_vehicles = true
 var options_drawAllOrderIcons = false
 var options_UseFallbackRenderer = false
 var options_DrawBuildingWireframes = false // Show real 2D vector footprints of static objects
+var options_Interpolation = true // Smooth interpolation between frames/ticks
 	//}
 
 
@@ -122,7 +123,8 @@ function updateLogic(frameTime)
 	if (!isPlaying)
 		return;
 
-	const ticksPassed = (frameTime / DemoTimePerTick) * playSpeed;
+	const dt = (typeof DetectedDemoHz !== "undefined" && DetectedDemoHz > 0) ? (1.0 / DetectedDemoHz) : (typeof DemoTimePerTick !== 'undefined' && DemoTimePerTick > 0 ? DemoTimePerTick : 0.04);
+	const ticksPassed = (frameTime / dt) * playSpeed;
 	interpolation_CurrentAmount += ticksPassed;
 
 	// while: for very fast speeds, skip drawing between updates.

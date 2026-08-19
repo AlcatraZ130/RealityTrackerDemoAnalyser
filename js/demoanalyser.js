@@ -39,25 +39,125 @@ var options_ShowSelectionSpeed = true;
 var ns_activeShockwaves = [];
 
 function getEntitySpeedKmh(entity) {
-	if (!entity || entity.X == null || isNaN(entity.X) || entity.ns_lastX == null || isNaN(entity.ns_lastX)) return 0;
-	const dt = typeof DemoTimePerTick !== 'undefined' && DemoTimePerTick > 0 ? DemoTimePerTick : 0.04;
+	if (!entity || entity.X == null || isNaN(entity.X)) return 0;
+
+	const isPlayer = (typeof PlayerObject !== "undefined" && entity instanceof PlayerObject) || (entity.isAlive !== undefined);
+	const isVehicle = (typeof VehicleObject !== "undefined" && entity instanceof VehicleObject) || (entity.Passengers !== undefined);
+
+	// Multi-sample regression / rolling window over ~0.75s (optimal for integer meter grids)
+	if (entity.ns_posHistory && entity.ns_posHistory.length >= 2) {
+		const history = entity.ns_posHistory;
+		const newest = history[history.length - 1];
+
+		// Find sample ~0.70s to 0.90s in the past
+		let targetSample = history[0];
+		for (let i = history.length - 2; i >= 0; i--) {
+			if (newest.time - history[i].time >= 0.75) {
+				targetSample = history[i];
+				break;
+			}
+		}
+
+		const dt = newest.time - targetSample.time;
+		const distM = Math.hypot(newest.x - targetSample.x, newest.z - targetSample.z);
+
+		// Teleport / Respawn check
+		if ((isPlayer && (!entity.vehicleid || entity.vehicleid < 0) && distM > 15.0) ||
+			(isVehicle && distM > 150.0)) {
+			entity.ns_smoothedSpeedKmh = 0;
+			entity.ns_stance = "stationary";
+			return 0;
+		}
+
+		if (dt >= 0.08 && !isNaN(distM)) {
+			let rawSpeedKmh = (distM / dt) * 3.6;
+
+			// Human sprint physical cap (max 28 km/h on foot with kit)
+			if (isPlayer && (!entity.vehicleid || entity.vehicleid < 0)) {
+				rawSpeedKmh = Math.min(28.0, rawSpeedKmh);
+			}
+
+			// Clean zero threshold (under 0.8 km/h or less than 0.35m moved)
+			if (rawSpeedKmh < 0.8 || distM < 0.35) {
+				rawSpeedKmh = 0;
+			}
+
+			// Exponential moving average filter for continuous smooth readout (tau = 220ms)
+			if (entity.ns_smoothedSpeedKmh == null || isNaN(entity.ns_smoothedSpeedKmh)) {
+				entity.ns_smoothedSpeedKmh = rawSpeedKmh;
+			} else {
+				entity.ns_smoothedSpeedKmh = 0.82 * entity.ns_smoothedSpeedKmh + 0.18 * rawSpeedKmh;
+			}
+
+			if (entity.ns_smoothedSpeedKmh < 0.4 && rawSpeedKmh === 0) {
+				entity.ns_smoothedSpeedKmh = 0;
+			}
+
+			return entity.ns_smoothedSpeedKmh;
+		}
+	}
+
+	// Fallback for single tick
+	const lx = entity.ns_lastX != null && !isNaN(entity.ns_lastX) ? entity.ns_lastX : entity.X;
 	const lz = entity.ns_lastZ != null && !isNaN(entity.ns_lastZ) ? entity.ns_lastZ : (entity.Z != null ? entity.Z : 0);
-	const distM = Math.hypot(entity.X - entity.ns_lastX, (entity.Z != null ? entity.Z : 0) - lz);
-	if (isNaN(distM)) return 0;
-	const speedMs = distM / dt;
-	return isNaN(speedMs) ? 0 : speedMs * 3.6;
+	const distM = Math.hypot(entity.X - lx, (entity.Z != null ? entity.Z : 0) - lz);
+	const dt = (typeof DetectedDemoHz !== "undefined" && DetectedDemoHz > 0) ? (1.0 / DetectedDemoHz) : (typeof DemoTimePerTick !== "undefined" ? DemoTimePerTick : 0.04);
+	let instantSpeedKmh = (distM / dt) * 3.6;
+	if (isNaN(instantSpeedKmh)) instantSpeedKmh = 0;
+	if (isPlayer && (!entity.vehicleid || entity.vehicleid < 0)) instantSpeedKmh = Math.min(28.0, instantSpeedKmh);
+	return instantSpeedKmh;
+}
+
+// Stance classification with Hysteresis (prevents flickering between walk/sprint)
+function getPlayerStance(p, spdKmh) {
+	if (!p || p.vehicleid >= 0) {
+		return { stance: "vehicle", radiusM: 0, opacity: 0, text: "Inside Vehicle", color: "rgba(0, 229, 255, OPACITY)" };
+	}
+
+	const currentStance = p.ns_stance || "stationary";
+	let newStance = currentStance;
+
+	// Hysteresis transition rules
+	if (currentStance === "sprint") {
+		if (spdKmh < 13.5) newStance = spdKmh >= 6.0 ? "walk" : (spdKmh >= 1.2 ? "crouch" : "stationary");
+	} else if (currentStance === "walk") {
+		if (spdKmh >= 16.5) newStance = "sprint";
+		else if (spdKmh < 4.5) newStance = spdKmh >= 1.2 ? "crouch" : "stationary";
+	} else if (currentStance === "crouch") {
+		if (spdKmh >= 16.5) newStance = "sprint";
+		else if (spdKmh >= 7.0) newStance = "walk";
+		else if (spdKmh < 0.8) newStance = "stationary";
+	} else { // stationary
+		if (spdKmh >= 16.5) newStance = "sprint";
+		else if (spdKmh >= 7.0) newStance = "walk";
+		else if (spdKmh >= 1.5) newStance = "crouch";
+	}
+
+	p.ns_stance = newStance;
+
+	switch (newStance) {
+		case "sprint":
+			return { stance: "sprint", radiusM: 35, opacity: 0.50, text: `Sprinting (${spdKmh.toFixed(0)}km/h - 35m)`, color: "rgba(255, 200, 0, OPACITY)" };
+		case "walk":
+			return { stance: "walk", radiusM: 20, opacity: 0.45, text: `Walking (${spdKmh.toFixed(0)}km/h - 20m)`, color: "rgba(0, 229, 255, OPACITY)" };
+		case "crouch":
+			return { stance: "crouch", radiusM: 12, opacity: 0.30, text: `Crouching (${spdKmh.toFixed(0)}km/h - 12m)`, color: "rgba(0, 229, 255, OPACITY)" };
+		default:
+			return { stance: "stationary", radiusM: 0, opacity: 0, text: "Stationary (0m sound)", color: "rgba(0, 229, 255, OPACITY)" };
+	}
 }
 
 function triggerShootingShockwave(x, z, radiusM, colorRgba, durationSec = 1.5, shooterId = null, vehicleId = null, victimId = null) {
 	if (x == null || isNaN(x) || z == null || isNaN(z)) return;
 	const currentTick = typeof Tick_Current !== "undefined" ? Tick_Current : 0;
+	const effectiveDt = (typeof DetectedDemoHz !== "undefined" && DetectedDemoHz > 0) ? (1.0 / DetectedDemoHz) : (typeof DemoTimePerTick !== 'undefined' && DemoTimePerTick > 0 ? DemoTimePerTick : 0.04);
 	ns_activeShockwaves.push({
 		x: x,
 		z: z,
 		maxRadiusM: radiusM,
 		color: colorRgba,
 		startTick: currentTick,
-		durationTicks: Math.max(15, Math.round(durationSec * 20)),
+		durationTicks: Math.max(10, Math.round(durationSec / effectiveDt)),
 		spawnTime: performance.now(),
 		shooterId: shooterId != null ? Number(shooterId) : null,
 		vehicleId: vehicleId != null ? Number(vehicleId) : null,
@@ -171,27 +271,11 @@ function drawMovementSoundAuras() {
 			if (p && !p.isJoining && p.isAlive && p.ns_lastX != null && !isNaN(p.ns_lastX) && p.X != null && !isNaN(p.X)) {
 				if (p.vehicleid < 0) {
 					const spdKmh = getEntitySpeedKmh(p);
-					let targetRadiusM = 0;
-					let targetOpacity = 0.0;
-					let colorRgba = "rgba(0, 229, 255, OPACITY)";
-					let stanceText = "";
-
-					if (spdKmh >= 18.0) {
-						targetRadiusM = 35;
-						targetOpacity = 0.50;
-						colorRgba = "rgba(255, 200, 0, OPACITY)";
-						stanceText = `Sprint (${spdKmh.toFixed(0)}km/h - 35m)`;
-					} else if (spdKmh >= 10.0) {
-						targetRadiusM = 20;
-						targetOpacity = 0.45;
-						colorRgba = "rgba(0, 229, 255, OPACITY)";
-						stanceText = `Walk (${spdKmh.toFixed(0)}km/h - 20m)`;
-					} else if (spdKmh >= 1.5) {
-						targetRadiusM = 12;
-						targetOpacity = 0.30;
-						colorRgba = "rgba(0, 229, 255, OPACITY)";
-						stanceText = `Crouch (${spdKmh.toFixed(0)}km/h - 12m)`;
-					}
+					const st = getPlayerStance(p, spdKmh);
+					const targetRadiusM = st.radiusM;
+					const targetOpacity = st.opacity;
+					const colorRgba = st.color;
+					const stanceText = st.text;
 
 					// Acoustic inertia smoothing (expansion vs dissipation)
 					if (p.ns_auraRadius == null || isNaN(p.ns_auraRadius)) {
@@ -199,9 +283,11 @@ function drawMovementSoundAuras() {
 						p.ns_auraOpacity = targetOpacity;
 					}
 
-					const lerpFactor = targetRadiusM > p.ns_auraRadius ? 0.20 : 0.08;
-					p.ns_auraRadius += (targetRadiusM - p.ns_auraRadius) * lerpFactor;
-					p.ns_auraOpacity += (targetOpacity - p.ns_auraOpacity) * lerpFactor;
+					if (typeof isPlaying !== "undefined" && isPlaying) {
+						const lerpFactor = targetRadiusM > p.ns_auraRadius ? 0.20 : 0.08;
+						p.ns_auraRadius += (targetRadiusM - p.ns_auraRadius) * lerpFactor;
+						p.ns_auraOpacity += (targetOpacity - p.ns_auraOpacity) * lerpFactor;
+					}
 
 					if (p.ns_auraRadius > 0.5 && p.ns_auraOpacity > 0.02) {
 						const cx = p.getCanvasX();
@@ -285,9 +371,11 @@ function drawSingleVehicleEngineAura(v) {
 		v.ns_auraOpacity = targetOpacity;
 	}
 
-	const lerpFactor = targetEngineRadiusM > v.ns_auraRadius ? 0.18 : 0.06;
-	v.ns_auraRadius += (targetEngineRadiusM - v.ns_auraRadius) * lerpFactor;
-	v.ns_auraOpacity += (targetOpacity - v.ns_auraOpacity) * lerpFactor;
+	if (typeof isPlaying !== "undefined" && isPlaying) {
+		const lerpFactor = targetEngineRadiusM > v.ns_auraRadius ? 0.18 : 0.06;
+		v.ns_auraRadius += (targetEngineRadiusM - v.ns_auraRadius) * lerpFactor;
+		v.ns_auraOpacity += (targetOpacity - v.ns_auraOpacity) * lerpFactor;
+	}
 
 	if (v.ns_auraRadius > 0.5 && v.ns_auraOpacity > 0.02) {
 		const cx = XtoCanvas(vx);
@@ -1267,7 +1355,6 @@ var ANALYSER_I18N = {
 		header: "Demo Analyser",
 		toolsHeader: "Analyser Tools & Debug",
 		coneRangeLabel: "Cone Range:",
-		btnHeatmap: "Compute Vision Heatmap",
 		opts: {
 			options_DrawVisionCone: {
 				label: "Vision Cone",
@@ -1297,10 +1384,6 @@ var ANALYSER_I18N = {
 				label: "Engagement Timer",
 				title: "Creates a 150m radius zone around the selected player and shows a timer in seconds above nearby enemies to measure response time."
 			},
-			options_DrawAttentionHeatmap: {
-				label: "Vision Heatmap",
-				title: "Shows a heatmap overlay of where the player spent most of their time looking."
-			},
 			options_DrawTimeline: {
 				label: "Timeline",
 				title: "Displays a timeline track of engagements and events for the selected player at the bottom of the screen."
@@ -1323,7 +1406,6 @@ var ANALYSER_I18N = {
 		header: "Demo Analyser",
 		toolsHeader: "Herramientas de An\u00e1lisis",
 		coneRangeLabel: "Rango del Cono:",
-		btnHeatmap: "Calcular Mapa de Calor",
 		opts: {
 			options_DrawVisionCone: {
 				label: "Cono de Visi\u00f3n",
@@ -1353,10 +1435,6 @@ var ANALYSER_I18N = {
 				label: "Tiempo de Reacci\u00f3n en Combate",
 				title: "Crea un \u00e1rea t\u00e1ctica alrededor del jugador y mide en segundos su tiempo de respuesta tras encarar o detectar a un enemigo."
 			},
-			options_DrawAttentionHeatmap: {
-				label: "Mapa de Calor de Visi\u00f3n",
-				title: "Genera una capa t\u00e9rmica que muestra las zonas del mapa donde el jugador concentr\u00f3 su mirada durante m\u00e1s tiempo."
-			},
 			options_DrawTimeline: {
 				label: "L\u00ednea de Tiempo T\u00e1ctica",
 				title: "Muestra una barra de eventos cronol\u00f3gica en la parte inferior para navegar instant\u00e1neamente entre combates y enfrentamientos."
@@ -1379,7 +1457,6 @@ var ANALYSER_I18N = {
 		header: "Demo Analyser",
 		toolsHeader: "Ferramentas de An\u00e1lise",
 		coneRangeLabel: "Alcance do Cone:",
-		btnHeatmap: "Calcular Mapa de Calor",
 		opts: {
 			options_DrawVisionCone: {
 				label: "Cone de Vis\u00e3o",
@@ -1408,10 +1485,6 @@ var ANALYSER_I18N = {
 			options_DrawFlankChronometer: {
 				label: "Tempo de Rea\u00e7\u00e3o em Combate",
 				title: "Cria uma \u00e1rea t\u00e1tica ao redor do jogador e calcula em segundos o tempo de resposta ap\u00f3s detectar um inimigo."
-			},
-			options_DrawAttentionHeatmap: {
-				label: "Mapa de Calor de Vis\u00e3o",
-				title: "Gera uma camada t\u00e9rmica que mostra as \u00e1reas do mapa onde o jogador concentrou a vis\u00e3o por mais tempo."
 			},
 			options_DrawTimeline: {
 				label: "Linha do Tempo T\u00e1tica",

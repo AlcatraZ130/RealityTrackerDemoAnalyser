@@ -40,6 +40,9 @@ var OpForTeam = ""
 var tickets1 = 0
 var tickets2 = 0
 
+var DetectedDemoHz = 3.0
+var IsHighTickrateDemo = false
+
 const MESSAGETYPE = {
 	SERVERDETAILS: 0x00,
 	DODLIST: 0x01,
@@ -160,7 +163,9 @@ class InterpolatedGameObject extends GameObject
 		this.ns_lastY = Y
 		this.ns_lastZ = Z
 		this.ns_lastRotation = 0
-		this.rotation = 0	
+		this.rotation = 0
+		this.ns_posHistory = []
+		this.ns_smoothedSpeedKmh = 0
 	}
 
 	getPos() {
@@ -172,6 +177,9 @@ class InterpolatedGameObject extends GameObject
 
 	getX() {
 		return interpolate(this.ns_lastX, this.X);
+	}
+	getY() {
+		return interpolate(this.ns_lastY, this.Y);
 	}
 	getZ() {
 		return interpolate(this.ns_lastZ, this.Z);
@@ -185,7 +193,39 @@ class InterpolatedGameObject extends GameObject
 		this.ns_lastZ = this.Z
 		this.ns_lastRotation = this.rotation;
 	}
+	recordPosHistory() {
+		if (this.X != null && !isNaN(this.X) && this.Z != null && !isNaN(this.Z)) {
+			if (!this.ns_posHistory) this.ns_posHistory = [];
+			const currentT = (typeof Tick_Current !== "undefined" && typeof tickToTime !== "undefined" && tickToTime[Tick_Current] != null)
+				? tickToTime[Tick_Current]
+				: (typeof Tick_Current !== "undefined" ? Tick_Current * (typeof DemoTimePerTick !== "undefined" ? DemoTimePerTick : 0.04) : 0);
+
+			if (this.ns_posHistory.length > 0) {
+				const lastEntry = this.ns_posHistory[this.ns_posHistory.length - 1];
+				const d = Math.hypot(this.X - lastEntry.x, this.Z - lastEntry.z);
+				if ((!this.vehicleid || this.vehicleid < 0) && d > 12.0) {
+					this.ns_posHistory = [];
+					this.ns_smoothedSpeedKmh = 0;
+				}
+			}
+
+			this.ns_posHistory.push({
+				x: this.X,
+				y: this.Y || 0,
+				z: this.Z,
+				rot: this.rotation || 0,
+				time: currentT
+			});
+
+			if (this.ns_posHistory.length > 36) {
+				this.ns_posHistory.shift();
+			}
+		}
+	}
 	onLoadState() {
+		this.ns_posHistory = [];
+		this.ns_smoothedSpeedKmh = 0;
+		this.ns_stance = "stationary";
 		this.updateInterpHistory();
 	}
 }
@@ -1050,7 +1090,6 @@ function getSquadName(team,squad)
 
 
 var TICKSPERSAVE = 100
-const TICKSJUMPMINIMUM = 350
 var LatestState = -1
 var isFastForwarding = false //Set to true to not do any UI updates when fast forwarding
 function goTo(Tick_Target)
@@ -1065,11 +1104,13 @@ function goTo(Tick_Target)
 	if (Tick_Target >= Tick_Count)
 		Tick_Target = Tick_Count - 1 
 
+	const jumpMin = Math.round(TICKSPERSAVE * 1.5)
+
 	// If its a forward tick, Check if we can shortcut by using a stored future state 
 	if (Tick_Target > Tick_Current)
 	{
 		// If its close do not load any states 
-		if (Tick_Target < Tick_Current + TICKSJUMPMINIMUM)
+		if (Tick_Target < Tick_Current + jumpMin)
 		{}
 
 		//if latest state is before current, then loading will not help. Do nothing.
@@ -1275,8 +1316,15 @@ function Update()
 		if (Tick_Current % TICKSPERSAVE == 0 && !(Tick_Current in savedStates) && Tick_Current != 0)
 			saveState()
 
-	for (var key in AllPlayers)
-		playerHistory.recordTick(key, AllPlayers[key])
+	if (!InitialParse) {
+		for (var key in AllPlayers) {
+			playerHistory.recordTick(key, AllPlayers[key]);
+			AllPlayers[key].recordPosHistory();
+		}
+		for (var vKey in AllVehicles) {
+			AllVehicles[vKey].recordPosHistory();
+		}
+	}
 
 	Tick_Current++
 
@@ -1342,6 +1390,12 @@ function ServerDetails(FullMessage)
 	
 	DemoTimePerTick = FullMessage.getFloat32(pos, true)
 	pos += 4
+
+	if (DemoTimePerTick > 0) {
+		DetectedDemoHz = 1.0 / DemoTimePerTick;
+		IsHighTickrateDemo = (DetectedDemoHz >= 10.0);
+		TICKSPERSAVE = Math.max(50, Math.round(30.0 * (DetectedDemoHz || 3.0)));
+	}
 
 	IPPort = getString(FullMessage, pos)
 	pos += IPPort.length + 1

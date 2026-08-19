@@ -22,22 +22,38 @@ const Style_HealthBarRed = "red"
 
 function interpolate(Start, End)
 {
-	return Start * (1 - interpolation_CurrentAmount) + End * interpolation_CurrentAmount
+	if (typeof options_Interpolation !== "undefined" && !options_Interpolation) {
+		return isNaN(End) ? Start : End;
+	}
+	if (isNaN(Start)) return End;
+	if (isNaN(End)) return Start;
+
+	return Start * (1 - interpolation_CurrentAmount) + End * interpolation_CurrentAmount;
 }
 
 function extrapolate(Start, End, extra)
 {
-	return Start * (1 - interpolation_CurrentAmount - extra) + End * (interpolation_CurrentAmount + extra)
+	if (typeof options_Interpolation !== "undefined" && !options_Interpolation) {
+		return isNaN(End) ? Start : End;
+	}
+	if (isNaN(Start)) return End;
+	if (isNaN(End)) return Start;
+	return Start * (1 - interpolation_CurrentAmount - extra) + End * (interpolation_CurrentAmount + extra);
 }
 
 function interpolateAngle(Start, End)
 {
+	if (typeof options_Interpolation !== "undefined" && !options_Interpolation) {
+		return isNaN(End) ? Start : End;
+	}
+	if (isNaN(Start)) return End;
+	if (isNaN(End)) return Start;
 	if (End - Start > 180)
-		End -= 360
+		End -= 360;
 	else if (Start - End > 180)
-		Start -= 360
+		Start -= 360;
 
-	return Start * (1 - interpolation_CurrentAmount) + End * interpolation_CurrentAmount
+	return Start * (1 - interpolation_CurrentAmount) + End * interpolation_CurrentAmount;
 }
 
 // Ease-out exponential interpolation for player camera rotation.
@@ -46,17 +62,20 @@ function interpolateAngle(Start, End)
 // Vehicles still use the linear interpolateAngle for realistic turret inertia.
 function interpolateAngleFast(Start, End)
 {
+	if (typeof options_Interpolation !== "undefined" && !options_Interpolation) {
+		return isNaN(End) ? Start : End;
+	}
 	if (End - Start > 180)
-		End -= 360
+		End -= 360;
 	else if (Start - End > 180)
-		Start -= 360
+		Start -= 360;
 
 	// ease-out exponential: f(t) = 1 - 2^(-10t)
 	// At t=0.1 → 50%, t=0.2 → 75%, t=0.3 → 87%, t=0.5 → 97%
 	const t = interpolation_CurrentAmount;
 	const tEased = t >= 1.0 ? 1.0 : 1.0 - Math.pow(2, -10 * t);
 
-	return Start * (1 - tEased) + End * tEased
+	return Start * (1 - tEased) + End * tEased;
 }
 
 //for UI purposes only
@@ -207,7 +226,7 @@ class Renderer2d {
 
 	update(frameTime) {
 
-    }
+	}
 
 	draw() {
 		var gametime = (Tick_Current + interpolation_CurrentAmount) * DemoTimePerTick;
@@ -223,8 +242,6 @@ class Renderer2d {
 		Context.clearRect(0, 0, Canvas.width, Canvas.height);
 
 		mapRenderer.draw(Context);
-
-		attentionHeatmap.draw(Context);
 
 
 		//Draw Flags

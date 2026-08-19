@@ -469,7 +469,7 @@ function stage3LoadingFininshed()
 	// Load this map's heightmap raw and configuration
 	heightmap.init(HeightmapURL + MapName + ".raw", heightmapData[MapName]); 
 	
-	// Phase 1.5: load building heightmap if it exists for this map.
+	// Load building heightmap if it exists for this map.
 	// Falls back silently to terrain-only LOS when the file is absent.
 	if (typeof buildingHeightmap !== 'undefined') {
 		buildingHeightmap.load(MapName.toLowerCase(), heightmapData[MapName]);
@@ -504,16 +504,22 @@ function ParseDemo_Start()
 }
 function ParseDemo_Part()
 {
-	for (var i=0; i<2500; i ++)
-		if (!Update()) //if reached end of file, end
+	const batchStart = performance.now();
+	while (performance.now() - batchStart < 28)
+	{
+		for (var i = 0; i < 1000; i++)
 		{
-			ParseDemo_End()
-			return
+			if (!Update()) // if reached end of file, end
+			{
+				ParseDemo_End();
+				return;
+			}
 		}
+	}
 	
-	//after parsing 2500 ticks, sleep a little to let browser redraw UI
-	updateLoadingStatus()
-	setTimeout(ParseDemo_Part,5)
+	// Yield smoothly to let browser redraw progress UI
+	updateLoadingStatus();
+	setTimeout(ParseDemo_Part, 0);
 }
 function ParseDemo_End()
 {
@@ -521,6 +527,28 @@ function ParseDemo_End()
 	isParsingDone = true
 	InitialParse = false
 	if (typeof markerDiagnosticsSummary === "function") markerDiagnosticsSummary()
+
+	// Safe double-verification of demo tickrate
+	if (typeof _timeCounter !== "undefined" && _timeCounter > 0 && typeof Tick_Count !== "undefined" && Tick_Count > 0) {
+		const measuredHz = Tick_Count / _timeCounter;
+		if (measuredHz > 0) {
+			DetectedDemoHz = measuredHz;
+		}
+	} else if (typeof DemoTimePerTick !== "undefined" && DemoTimePerTick > 0) {
+		DetectedDemoHz = 1.0 / DemoTimePerTick;
+	}
+	IsHighTickrateDemo = (DetectedDemoHz >= 10.0);
+
+	if (typeof TICKSPERSAVE !== "undefined") {
+		TICKSPERSAVE = Math.max(50, Math.round(30.0 * (DetectedDemoHz || 3.0)));
+	}
+
+	const badgeElem = document.getElementById("lblDemoTickrateBadge");
+	if (badgeElem) {
+		badgeElem.textContent = `[${DetectedDemoHz.toFixed(1)} Hz ${IsHighTickrateDemo ? "High-Rate" : "Legacy"}]`;
+		badgeElem.title = `Tasa de grabación detectada en el servidor: ${DetectedDemoHz.toFixed(2)} Hz`;
+	}
+
 	updateLoadingStatus()
 	if (typeof analyserPreloader !== "undefined")
 		analyserPreloader.run(stage4LoadingFininshed)
@@ -557,6 +585,13 @@ function stage4LoadingFininshed()
 		loadSettings()
 	} catch (e) {
 		console.error("Error in loadSettings():", e);
+	}
+
+	// Auto-configure interpolation mode for high-rate vs legacy demo if user hasn't explicitly set an override in localStorage
+	if (localStorage.getItem("options_Interpolation") === null) {
+		options_Interpolation = !IsHighTickrateDemo; // High-rate defaults to raw server frames (false), legacy defaults to smooth (true)
+		const interpCheckbox = document.getElementById("options_Interpolation");
+		if (interpCheckbox) interpCheckbox.checked = options_Interpolation;
 	}
 	
 	//Reset speed to 1
@@ -613,6 +648,8 @@ function writeServerInfoTable()
 	serverInfoTableAddLine("Map mode", GameMode)
 	serverInfoTableAddLine("Map layer", Layer)
 	serverInfoTableAddLine("Round length", roundLength)
+	const hzText = (typeof DetectedDemoHz !== "undefined" && DetectedDemoHz > 0) ? `${DetectedDemoHz.toFixed(1)} Hz (${IsHighTickrateDemo ? "High-Rate Server" : "Legacy 3Hz"})` : "3.0 Hz (Legacy)";
+	serverInfoTableAddLine("Demo Tickrate", hzText);
 }
 
 function showDemoSelectionInterface()
@@ -792,18 +829,30 @@ function colorImage(white)
 // Load settings from local storage
 function loadSettings()
 {
-	localStorage.removeItem('options_DrawBuildingWireframes');
+	$("input[id^='options_']").each(function() {
+		const id = this.id;
+		if (this.type === "checkbox") {
+			window[id] = this.checked;
+		} else if (this.type === "range") {
+			window[id] = parseFloat(this.value);
+		}
+	});
+
+	// Override with localStorage if previously saved by the user
 	for (var Name in localStorage) 
 		if (Name.startsWith("options_"))
 		{
-			changeSetting(Name, JSON.parse(localStorage[Name]))
+			try {
+				const val = JSON.parse(localStorage[Name]);
+				window[Name] = val;
 
-			if ($("input[id='" + Name + "']")[0]) {
-				const input = $("input[id='" + Name + "']")[0]
-				if (input.type == "checkbox")
-					input.checked = window[Name]
-				else if (input.type == "range")
-					input.value = window[Name]
-			}
+				const elem = document.getElementById(Name);
+				if (elem) {
+					if (elem.type === "checkbox")
+						elem.checked = !!val;
+					else if (elem.type === "range")
+						elem.value = val;
+				}
+			} catch (e) {}
 		}
 }

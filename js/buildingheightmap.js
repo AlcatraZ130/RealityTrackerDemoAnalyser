@@ -271,9 +271,10 @@ class BuildingHeightmap {
         }
 
         // - 2a. Fast path: MAP_STATICS_DB (pre-compiled, instant) --
-        if (window.MAP_STATICS_DB && window.MAP_STATICS_DB[mapKey]) {
+        const staticsKey = window.MAP_STATICS_DB ? (window.MAP_STATICS_DB[mapKey] ? mapKey : (window.MAP_STATICS_DB[mapKey.toLowerCase()] ? mapKey.toLowerCase() : null)) : null;
+        if (staticsKey) {
             try {
-                this._buildFromDb(mapKey, heightmapConfig);
+                this._buildFromDb(staticsKey, heightmapConfig);
                 this._addCustomObjects();
                 this.initialized = true;
                 this._loading = false;
@@ -306,6 +307,7 @@ class BuildingHeightmap {
     _buildFromDb(mapKey, config) {
         this._initGrid(config);
         const dbObjects = window.MAP_STATICS_DB[mapKey];
+        if (!dbObjects) return;
         for (let i = 0; i < dbObjects.length; i++) {
             const o = dbObjects[i];
             this._addObject({
@@ -314,6 +316,8 @@ class BuildingHeightmap {
                 y:    o.y   !== undefined ? o.y   : (o[2] !== undefined ? o[2] : 0),
                 z:    o.z   !== undefined ? o.z   : (o[3] !== undefined ? o[3] : 0),
                 yaw:  o.yaw !== undefined ? o.yaw : (o[4] !== undefined ? o[4] : 0),
+                scaleX: o.scaleX !== undefined ? o.scaleX : (o[5] !== undefined ? o[5] : 1),
+                scaleZ: o.scaleZ !== undefined ? o.scaleZ : (o[6] !== undefined ? o[6] : 1),
             });
         }
     }
@@ -381,11 +385,12 @@ class BuildingHeightmap {
         const exactName = (obj.name || "").toLowerCase();
         const tplKey = this.getTemplateKey(obj.name);
 
-        let width = prof.w;
-        let length = prof.l;
-        let height = prof.h !== undefined ? prof.h : 6.0;
+        let width = prof ? prof.w : 6.0;
+        let length = prof ? prof.l : 6.0;
+        let height = (prof && prof.h !== undefined) ? prof.h : 6.0;
         let posX = obj.x, posZ = obj.z, yaw = obj.yaw || 0;
-        let scaleX = 1.0, scaleZ = 1.0;
+        let scaleX = obj.scaleX !== undefined ? obj.scaleX : 1.0;
+        let scaleZ = obj.scaleZ !== undefined ? obj.scaleZ : 1.0;
         let customPolygon = null;
 
         // Apply template override if present
@@ -452,6 +457,8 @@ class BuildingHeightmap {
             height = fpH;
         }
 
+        let isVeg = (rawFp && rawFp.isVegetation !== undefined) ? !!rawFp.isVegetation : (prof ? !!prof.isVegetation : false);
+
         const baseY = obj.y || 0;
         const obb = {
             id: this.obbs.length,
@@ -467,7 +474,7 @@ class BuildingHeightmap {
             hidden: false,
             customPolygon: customPolygon || null,
             ignoreLOS: ignoreLOS,
-            isVegetation: !!prof.isVegetation
+            isVegetation: isVeg
         };
 
         this.obbs.push(obb);
@@ -583,8 +590,8 @@ class BuildingHeightmap {
         const sz = obb.scaleZ || 1.0;
 
         return modelPoints.map(pt => {
-            const px = (pt.x !== undefined ? pt.x : pt[0]) * sx;
-            const pz = (pt.z !== undefined ? pt.z : pt[1]) * sz;
+            const px =  (pt.x !== undefined ? pt.x : pt[0]) * sx;
+            const pz = -(pt.z !== undefined ? pt.z : pt[1]) * sz;
             const wx = obb.x + (px * cosR - pz * sinR);
             const wz = obb.z + (px * sinR + pz * cosR);
             return {
@@ -592,6 +599,20 @@ class BuildingHeightmap {
                 y: YtoCanvas(wz)
             };
         });
+    }
+
+    pointInPolygon(px, py, poly) {
+        if (!poly || poly.length < 3) return false;
+        let inside = false;
+        for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+            const xi = poly[i].x !== undefined ? poly[i].x : poly[i][0];
+            const yi = poly[i].y !== undefined ? poly[i].y : poly[i][1];
+            const xj = poly[j].x !== undefined ? poly[j].x : poly[j][0];
+            const yj = poly[j].y !== undefined ? poly[j].y : poly[j][1];
+            const intersect = ((yi > py) !== (yj > py)) && (px < (xj - xi) * (py - yi) / (yj - yi) + xi);
+            if (intersect) inside = !inside;
+        }
+        return inside;
     }
 
     drawBuildingWireframes(ctx) {
@@ -628,13 +649,13 @@ class BuildingHeightmap {
                 ctx.fillStyle   = "rgba(168, 85, 247, 0.20)";
                 ctx.lineWidth   = 1.5;
             } else if (obb.isVegetation) {
-                ctx.strokeStyle = "#10b981";
-                ctx.fillStyle   = "rgba(16, 185, 129, 0.15)";
-                ctx.lineWidth   = 1.0;
+                ctx.strokeStyle = "#10b981"; // Emerald Green for Tree Trunks (40cm)
+                ctx.fillStyle   = "rgba(16, 185, 129, 0.25)";
+                ctx.lineWidth   = 1.2;
             } else {
-                ctx.strokeStyle = "#00e5ff";
-                ctx.fillStyle   = "rgba(0, 229, 255, 0.10)";
-                ctx.lineWidth   = 1.0;
+                ctx.strokeStyle = "#00e5ff"; // Bright Cyan for Buildings & Walls
+                ctx.fillStyle   = "rgba(0, 229, 255, 0.12)";
+                ctx.lineWidth   = 1.5;
             }
 
             ctx.fill();
@@ -744,7 +765,7 @@ class BuildingHeightmap {
     checkRayPolygonIntersection(p1, p2, obb) {
         if (!obb || obb.hidden || obb.ignoreLOS) return null;
 
-        const rad = -obb.yaw * Math.PI / 180;
+        const rad = -(obb.yaw || 0) * Math.PI / 180;
         const cosR = Math.cos(rad), sinR = Math.sin(rad);
         const sx = obb.scaleX || 1.0;
         const sz = obb.scaleZ || 1.0;
@@ -752,10 +773,10 @@ class BuildingHeightmap {
         const dx1 = p1.x - obb.x, dz1 = p1.z - obb.z;
         const dx2 = p2.x - obb.x, dz2 = p2.z - obb.z;
 
-        const lx1 = (dx1 * cosR - dz1 * sinR) / sx;
-        const lz1 = (dx1 * sinR + dz1 * cosR) / sz;
-        const lx2 = (dx2 * cosR - dz2 * sinR) / sx;
-        const lz2 = (dx2 * sinR + dz2 * cosR) / sz;
+        const lx1 = (dx1 * cosR + dz1 * sinR) / sx;
+        const lz1 = (dx1 * sinR - dz1 * cosR) / sz;
+        const lx2 = (dx2 * cosR + dz2 * sinR) / sx;
+        const lz2 = (dx2 * sinR - dz2 * cosR) / sz;
 
         const rawFp = obb.customPolygon || this._getFootprint(obb.name);
         let poly = (rawFp && rawFp.poly) ? rawFp.poly : rawFp;
@@ -784,17 +805,27 @@ class BuildingHeightmap {
         }
 
         let closestT = Infinity;
-        const n = poly.length;
 
-        for (let i = 0; i < n; i++) {
-            const pA = poly[i], pB = poly[(i + 1) % n];
-            const ax = pA.x !== undefined ? pA.x : pA[0];
-            const az = pA.z !== undefined ? pA.z : pA[1];
-            const bx = pB.x !== undefined ? pB.x : pB[0];
-            const bz = pB.z !== undefined ? pB.z : pB[1];
-            const t = this._intersectSegmentSegment(lx1, lz1, lx2, lz2, ax, az, bx, bz);
-            if (t !== null && t < closestT) {
-                closestT = t;
+        if (rawFp && rawFp.walls && rawFp.walls.length > 0) {
+            for (let i = 0; i < rawFp.walls.length; i++) {
+                const w = rawFp.walls[i];
+                const t = this._intersectSegmentSegment(lx1, lz1, lx2, lz2, w[0], w[1], w[2], w[3]);
+                if (t !== null && t < closestT) {
+                    closestT = t;
+                }
+            }
+        } else {
+            const n = poly.length;
+            for (let i = 0; i < n; i++) {
+                const pA = poly[i], pB = poly[(i + 1) % n];
+                const ax = pA.x !== undefined ? pA.x : pA[0];
+                const az = pA.z !== undefined ? pA.z : pA[1];
+                const bx = pB.x !== undefined ? pB.x : pB[0];
+                const bz = pB.z !== undefined ? pB.z : pB[1];
+                const t = this._intersectSegmentSegment(lx1, lz1, lx2, lz2, ax, az, bx, bz);
+                if (t !== null && t < closestT) {
+                    closestT = t;
+                }
             }
         }
 

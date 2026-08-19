@@ -33,22 +33,22 @@ var SelectedSquadNumber = SELECTED_NOTHING
 
 function selection_SelectObject(obj) {
 	if (obj == null)
-		selection_SelectPlayer(SELECTED_NOTHING)
+		selection_SelectPlayer(SELECTED_NOTHING);
 	else if (obj instanceof PlayerObject)
-		selection_SelectPlayer(obj.id)
+		selection_SelectPlayer(obj.id);
 	else if (obj instanceof ProjObject && obj.player != null)
-		selection_SelectPlayer(obj.player.id, true)
+		selection_SelectPlayer(obj.player.id, true);
 }
 
 function selection_selectObjectSquad(object) {
 	if (object != null)
 	{
 		if (object instanceof PlayerObject)
-			selection_SelectPlayersSquad(object.id)
+			selection_SelectPlayersSquad(object.id);
 		else if (object instanceof ProjObject)
-			selection_SelectPlayersSquad(object.player.id)
+			selection_SelectPlayersSquad(object.player.id);
 	}
-	selection_SelectPlayer(SELECTED_NOTHING)
+	selection_SelectPlayer(SELECTED_NOTHING);
 }
 
 function selection_SelectPlayer(i, allowHighlight)
@@ -184,7 +184,7 @@ function selection_SelectSquad(Team, Squad)
 
 function selection_DeselectCurrent()
 {
-	selection_SelectPlayer(SELECTED_NOTHING)
+	selection_SelectPlayer(SELECTED_NOTHING);
 }
 
 // Rewrites the information box
@@ -198,22 +198,25 @@ function selection_UpdateInformationBox()
 	// Vehicle is selected
 	if (SelectedVehicle != SELECTED_NOTHING)
 	{
-		var node = vehicleTables[SelectedVehicle]
-		if (node == null)
-			return
-
-		var clone = node.cloneNode(true)
-		clone.className = "vehicleTable"
-		div.appendChild(clone)
+		const v = AllVehicles[SelectedVehicle]
+		div.innerHTML = "<b>" + escapeHtml(v.name) + "</b>"
+		
+		if (v.health > 0)
+			div.innerHTML += "<br>Health: " + v.health
 
 		const spdDiv = document.createElement("div");
 		spdDiv.id = "selection_SpeedAcousticContainer";
-		spdDiv.style.cssText = "font-size: 11px; font-weight: bold; color: #00ff66; margin-top: 3px;";
+		spdDiv.style.cssText = "margin-top: 0px;";
 		div.appendChild(spdDiv);
 
 		updateSelectionSpeedAcousticLabel();
+
+		if (v.team == 1)
+			div.classList.add("color_Team1")
+		else	
+			div.classList.add("color_Team2")
 	}
-	// If player is selected
+	// Player is selected
 	else if (SelectedPlayer != SELECTED_NOTHING)
 	{
 		var p = AllPlayers[SelectedPlayer]
@@ -221,19 +224,27 @@ function selection_UpdateInformationBox()
 		if (p.squad == 0)
 		{
 			if (p.isSquadLeader)
-				div.innerHTML += "Commander"
+				div.innerHTML += "<b>Commander</b>"
 			else
-				div.innerHTML += "Unassigned"
+				div.innerHTML += "<b>Unassigned</b>"
 		}
 		else
 		{
-			div.innerHTML += "Squad " + p.squad
-			if (p.isSquadLeader)
-				div.innerHTML += " Leader"
+			const sqName = (typeof getSquadName === "function") ? getSquadName(p.team, p.squad) : "";
+			const sqColor = (typeof getSquadColor === "function") ? getSquadColor(p.team, p.squad) : "";
+			const sqDisplayName = sqName ? `${p.squad}. ${escapeHtml(sqName)}` : `Squad ${p.squad}`;
+			const slText = p.isSquadLeader ? " (SL)" : "";
+			if (sqColor) {
+				div.innerHTML += `<span style="color: ${sqColor}; font-weight: bold;">${sqDisplayName}${slText}</span>`;
+			} else {
+				div.innerHTML += `<b>${sqDisplayName}${slText}</b>`;
+			}
 		} 
 		div.innerHTML += "<br>" + escapeHtml(p.name)
 		const imgNode = p.ns_kitImage.cloneNode(false);
 		imgNode.width = 16;imgNode.height = 16;
+		imgNode.style.verticalAlign = "text-bottom";
+		imgNode.style.marginLeft = "3px";
 		div.appendChild(imgNode)
 		div.innerHTML += "<br>Height: " + p.Y	
 		if (p.health > 0) 
@@ -241,7 +252,7 @@ function selection_UpdateInformationBox()
 
 		const spdDiv = document.createElement("div");
 		spdDiv.id = "selection_SpeedAcousticContainer";
-		spdDiv.style.cssText = "margin-top: 3px;";
+		spdDiv.style.cssText = "margin-top: 0px;";
 		div.appendChild(spdDiv);
 
 		updateSelectionSpeedAcousticLabel();
@@ -280,26 +291,17 @@ function updateSelectionSpeedAcousticLabel() {
 		const vName = (veh.name || "").toLowerCase();
 		const isHeavy = vName.includes("tnk") || vName.includes("tank") || vName.includes("apc") || vName.includes("bmp") || vName.includes("btr");
 		const isHeli = vName.includes("heli") || vName.includes("uh60") || vName.includes("mi8") || vName.includes("ah1z");
-		let acousticState = "Engine OFF (Sonideando)";
+		let acousticState = "Engine OFF";
 		if (hasDriver) {
 			let engineRadiusM = speedKmh >= 2.0 ? (isHeli ? 800 : isHeavy ? 450 : 250) : (isHeli ? 300 : isHeavy ? 100 : 60);
 			acousticState = speedKmh >= 2.0 ? `Driving (${engineRadiusM}m sound)` : `Engine Idle (${engineRadiusM}m sound)`;
 		}
-		container.innerHTML = `<span style="color: #00ff66; font-weight: bold;">Speed: ${speedKmh.toFixed(1)} km/h</span><br><span style="color: #00e5ff; font-weight: bold;">Acoustic: ${acousticState}</span>`;
+		container.innerHTML = `Speed: ${speedKmh.toFixed(1)} km/h<br>Acoustic: ${acousticState}`;
 	} else if (typeof SelectedPlayer !== "undefined" && SelectedPlayer != SELECTED_NOTHING) {
 		const p = AllPlayers[SelectedPlayer];
 		if (!p || typeof getEntitySpeedKmh !== "function") return;
 		const speedKmh = getEntitySpeedKmh(p);
-		let stanceText = "Stationary (0m)";
-		if (p.vehicleid >= 0) {
-			stanceText = "Inside Vehicle";
-		} else if (speedKmh >= 18.0) {
-			stanceText = "Sprinting (35m sound)";
-		} else if (speedKmh >= 10.0) {
-			stanceText = "Walking (20m sound)";
-		} else if (speedKmh >= 1.5) {
-			stanceText = "Crouching/Sneaking (12m sound)";
-		}
-		container.innerHTML = `<span style="color: #00ff66; font-weight: bold;">Speed: ${speedKmh.toFixed(1)} km/h</span><br><span style="color: #00e5ff; font-weight: bold;">Acoustic: ${stanceText}</span>`;
+		const st = (typeof getPlayerStance === "function") ? getPlayerStance(p, speedKmh) : { text: "Stationary (0m)" };
+		container.innerHTML = `Speed: ${speedKmh.toFixed(1)} km/h<br>Acoustic: ${st.text}`;
 	}
 }
