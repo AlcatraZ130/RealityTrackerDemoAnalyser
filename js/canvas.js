@@ -212,6 +212,11 @@ class Renderer2d {
 			}
 		}
 
+		if (objectToSelect == null && typeof options_DrawBuildingWireframes !== "undefined" && options_DrawBuildingWireframes && typeof buildingHeightmap !== "undefined") {
+			const obb = buildingHeightmap.getObbAtCanvasPos(pos.X, pos.Y);
+			if (obb) return obb;
+		}
+
 		return objectToSelect;
 	}
 

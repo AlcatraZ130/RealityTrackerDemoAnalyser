@@ -37,7 +37,7 @@ class Renderer3d extends Initializable {
 
 
 
-    getInitializationList() { return [terrainRenderer, geometry2dRenderer, geometryRenderer]; }
+    getInitializationList() { return [terrainRenderer, building3dRenderer, geometry2dRenderer, geometryRenderer]; }
     getDependencyList() { return [heightmap]; }
 
     init() {
@@ -296,6 +296,9 @@ class Renderer3d extends Initializable {
 
 
         terrainRenderer.draw();
+        if (typeof building3dRenderer !== "undefined" && building3dRenderer.initialized) {
+            building3dRenderer.draw();
+        }
         geometry2dRenderer.draw();
         geometryRenderer.draw();
     };

@@ -32,12 +32,27 @@ var SelectedSquadTeam = SELECTED_NOTHING
 var SelectedSquadNumber = SELECTED_NOTHING
 
 function selection_SelectObject(obj) {
-	if (obj == null)
+	if (obj == null) {
+		if (typeof buildingHeightmap !== "undefined") buildingHeightmap.setSelectedObb(null);
 		selection_SelectPlayer(SELECTED_NOTHING);
-	else if (obj instanceof PlayerObject)
+	}
+	else if (obj instanceof PlayerObject) {
+		if (typeof buildingHeightmap !== "undefined") buildingHeightmap.setSelectedObb(null);
 		selection_SelectPlayer(obj.id);
-	else if (obj instanceof ProjObject && obj.player != null)
+	}
+	else if (obj instanceof ProjObject && obj.player != null) {
+		if (typeof buildingHeightmap !== "undefined") buildingHeightmap.setSelectedObb(null);
 		selection_SelectPlayer(obj.player.id, true);
+	}
+	else if (obj && obj._isBuildingObb) {
+		selection_SelectPlayer(SELECTED_NOTHING);
+		if (typeof buildingHeightmap !== "undefined") {
+			buildingHeightmap.setSelectedObb(obj);
+		}
+		selection_UpdateInformationBox();
+		$("#selection").dialog("open");
+		requestUpdate();
+	}
 }
 
 function selection_selectObjectSquad(object) {
@@ -48,6 +63,7 @@ function selection_selectObjectSquad(object) {
 		else if (object instanceof ProjObject)
 			selection_SelectPlayersSquad(object.player.id);
 	}
+	if (typeof buildingHeightmap !== "undefined") buildingHeightmap.setSelectedObb(null);
 	selection_SelectPlayer(SELECTED_NOTHING);
 }
 
@@ -184,6 +200,7 @@ function selection_SelectSquad(Team, Squad)
 
 function selection_DeselectCurrent()
 {
+	if (typeof buildingHeightmap !== "undefined") buildingHeightmap.setSelectedObb(null);
 	selection_SelectPlayer(SELECTED_NOTHING);
 }
 
@@ -261,6 +278,34 @@ function selection_UpdateInformationBox()
 			div.classList.add("color_Team1")
 		else	
 			div.classList.add("color_Team2")
+	}
+	// Building Footprint is selected
+	else if (typeof buildingHeightmap !== "undefined" && buildingHeightmap.selectedObb)
+	{
+		const b = buildingHeightmap.selectedObb;
+		const typeStr = b.isVegetation ? "Vegetation Collision (Trunk)" : (b.isCustom ? "Custom Object" : (b.ignoreLOS ? "Non-LOS Barrier" : "PR Static Structure"));
+		
+		div.innerHTML = `
+			<div style="font-size: 11px; line-height: 1.4; color: #fff; padding: 2px 0;">
+				<div style="font-weight: bold; color: #fbbf24; font-size: 12px; margin-bottom: 3px; word-break: break-all;">
+					🏛️ ${escapeHtml(b.name || 'Building')}
+				</div>
+				<div style="color: #94a3b8; font-size: 10px; margin-bottom: 5px;">
+					Type: <span style="color: #38bdf8;">${typeStr}</span>
+				</div>
+				<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 2px 6px; font-size: 10.5px; background: rgba(255,255,255,0.06); padding: 5px 6px; border-radius: 3px;">
+					<div><b>Width:</b> ${(b.width || 0).toFixed(1)}m</div>
+					<div><b>Length:</b> ${(b.length || 0).toFixed(1)}m</div>
+					<div><b>Height:</b> ${(b.height || 0).toFixed(1)}m</div>
+					<div><b>Yaw/Rot:</b> ${(b.yaw || 0).toFixed(1)}°</div>
+					<div><b>Pos X:</b> ${(b.x || 0).toFixed(1)}</div>
+					<div><b>Pos Z:</b> ${(b.z || 0).toFixed(1)}</div>
+					<div><b>Base Y:</b> ${(b.y || 0).toFixed(1)}</div>
+					<div><b>Min Y:</b> ${(b.minY || 0).toFixed(1)}</div>
+					<div><b>Max Y:</b> ${(b.maxY || 0).toFixed(1)}</div>
+				</div>
+			</div>
+		`;
 	}
 }
 

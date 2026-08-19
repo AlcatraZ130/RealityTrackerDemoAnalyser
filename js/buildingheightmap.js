@@ -87,6 +87,8 @@ class BuildingHeightmap {
         this._footprintCacheBuilt = null;
         this._heightmapCacheCanvas = null;
         this._heightmapCacheMap    = null;
+        this.selectedObb           = null;
+        this.mesh3dDb              = {};
     }
 
     getTemplateKey(name) {
@@ -270,7 +272,22 @@ class BuildingHeightmap {
             console.warn(`[BuildingHeightmap] Could not load overrides for ${mapKey}:`, e.message);
         }
 
-        // - 2a. Fast path: MAP_STATICS_DB (pre-compiled, instant) --
+        // -- 1b. Load 100% Authentic 3D Collision Meshes for the Map --
+        this.mesh3dDb = {};
+        try {
+            const meshRes = await fetch(`MapsStaticobjects/${mapKey}/${mapKey}_mesh3d.json`);
+            if (meshRes.ok) {
+                this.mesh3dDb = await meshRes.json();
+                for (const key in this.mesh3dDb) {
+                    this._extract2DLinesFrom3D(this.mesh3dDb[key]);
+                }
+                console.log(`[BuildingHeightmap] Loaded ${Object.keys(this.mesh3dDb).length} 3D collision meshes for ${mapKey}`);
+            }
+        } catch (e) {
+            console.warn(`[BuildingHeightmap] No 3D mesh file for ${mapKey}:`, e.message);
+        }
+
+        // -- 2a. Fast path: MAP_STATICS_DB (pre-compiled, instant) --
         const staticsKey = window.MAP_STATICS_DB ? (window.MAP_STATICS_DB[mapKey] ? mapKey : (window.MAP_STATICS_DB[mapKey.toLowerCase()] ? mapKey.toLowerCase() : null)) : null;
         if (staticsKey) {
             try {
@@ -279,6 +296,9 @@ class BuildingHeightmap {
                 this.initialized = true;
                 this._loading = false;
                 this.triggerCanvasRedraw();
+                if (typeof building3dRenderer !== "undefined" && building3dRenderer.initialized) {
+                    building3dRenderer.rebuildBuffers();
+                }
                 const withFp = this.obbs.filter(o => this._getObbCanvasPolygon(o).length >= 3).length;
                 console.log(`[BuildingHeightmap] ${this.obbs.length} objects loaded from MAP_STATICS_DB for ${mapKey} | footprints: ${withFp}/${this.obbs.length} (${Math.round(withFp / this.obbs.length * 100)}%)`);
                 return;
@@ -287,7 +307,7 @@ class BuildingHeightmap {
             }
         }
 
-        // - 2b. Fallback: parse staticobjects.con --
+        // -- 2b. Fallback: parse staticobjects.con --
         try {
             const res = await fetch(`MapsStaticobjects/${mapKey}/staticobjects.con`);
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -296,6 +316,9 @@ class BuildingHeightmap {
             this.initialized = true;
             this._loading = false;
             this.triggerCanvasRedraw();
+            if (typeof building3dRenderer !== "undefined" && building3dRenderer.initialized) {
+                building3dRenderer.rebuildBuffers();
+            }
         } catch (err) {
             this._loading = false;
             console.warn(`[BuildingHeightmap] No building data for ${mapKey} (${err.message})`);
@@ -459,6 +482,9 @@ class BuildingHeightmap {
 
         let isVeg = (rawFp && rawFp.isVegetation !== undefined) ? !!rawFp.isVegetation : (prof ? !!prof.isVegetation : false);
 
+        const tmplKey = this.getTemplateKey(obj.name);
+        const mesh3d = (this.mesh3dDb && (this.mesh3dDb[obj.name] || this.mesh3dDb[tmplKey])) || null;
+
         const baseY = obj.y || 0;
         const obb = {
             id: this.obbs.length,
@@ -474,7 +500,8 @@ class BuildingHeightmap {
             hidden: false,
             customPolygon: customPolygon || null,
             ignoreLOS: ignoreLOS,
-            isVegetation: isVeg
+            isVegetation: isVeg,
+            mesh3d: mesh3d
         };
 
         this.obbs.push(obb);
@@ -500,6 +527,9 @@ class BuildingHeightmap {
                 fpMaxY = rawFp.maxY;
             }
 
+            const tmplKey = this.getTemplateKey(c.name);
+            const mesh3d = (this.mesh3dDb && (this.mesh3dDb[c.name] || this.mesh3dDb[tmplKey])) || null;
+
             const cBaseY = c.y || 0;
             const cHeight = fpH || 6;
             const obb = {
@@ -516,7 +546,8 @@ class BuildingHeightmap {
                 maxY:  fpMaxY != null ? (cBaseY + fpMaxY) : (cBaseY + cHeight),
                 hidden: !!c.hidden,
                 customPolygon: (c.customPolygon && c.customPolygon.length >= 3) ? c.customPolygon : null,
-                ignoreLOS: !!c.ignoreLOS
+                ignoreLOS: !!c.ignoreLOS,
+                mesh3d: mesh3d
             };
             this.obbs.push(obb);
             this._rasterizeObb(obb);
@@ -615,10 +646,120 @@ class BuildingHeightmap {
         return inside;
     }
 
+    getObbAtCanvasPos(canvasX, canvasY) {
+        if (!this.initialized || !this.obbs || this.obbs.length === 0) return null;
+
+        for (let i = this.obbs.length - 1; i >= 0; i--) {
+            const obb = this.obbs[i];
+            if (obb.hidden) continue;
+
+            const cx = XtoCanvas(obb.x);
+            const cy = YtoCanvas(obb.z);
+            const radM = Math.max(obb.width || 8, obb.length || 8) * Math.max(obb.scaleX || 1.0, obb.scaleZ || 1.0);
+            const radCanvas = (typeof MapSize !== "undefined" && typeof MapImageDrawSize !== "undefined") ? (radM / MapSize) * MapImageDrawSize + 30 : 45;
+
+            if (Math.abs(cx - canvasX) > radCanvas || Math.abs(cy - canvasY) > radCanvas) continue;
+
+            const poly = this._getObbCanvasPolygon(obb);
+            if (!poly || poly.length < 3) continue;
+
+            if (this.pointInPolygon(canvasX, canvasY, poly)) {
+                obb._isBuildingObb = true;
+                return obb;
+            }
+
+            // Boundary click tolerance
+            for (let j = 0; j < poly.length; j++) {
+                const p1 = poly[j];
+                const p2 = poly[(j + 1) % poly.length];
+                const distSq = this._distToSegmentSq(canvasX, canvasY, p1.x, p1.y, p2.x, p2.y);
+                if (distSq <= 36) {
+                    obb._isBuildingObb = true;
+                    return obb;
+                }
+            }
+        }
+        return null;
+    }
+
+    setSelectedObb(obb) {
+        this.selectedObb = obb || null;
+        this.triggerCanvasRedraw();
+    }
+
+    _extract2DLinesFrom3D(mesh) {
+        if (!mesh || !mesh.v || !mesh.i) return [];
+        if (mesh.lines2d) return mesh.lines2d;
+
+        const verts = mesh.v;
+        const indices = mesh.i;
+        const edgeMap = new Map();
+
+        const addEdge = (x1, z1, x2, z2) => {
+            const dx = x2 - x1, dz = z2 - z1;
+            const len = Math.hypot(dx, dz);
+            if (len < 0.6) return;
+
+            const kx1 = Math.round(x1 * 4) / 4;
+            const kz1 = Math.round(z1 * 4) / 4;
+            const kx2 = Math.round(x2 * 4) / 4;
+            const kz2 = Math.round(z2 * 4) / 4;
+            if (kx1 === kx2 && kz1 === kz2) return;
+
+            const key = (kx1 < kx2 || (kx1 === kx2 && kz1 < kz2))
+                ? `${kx1},${kz1}_${kx2},${kz2}`
+                : `${kx2},${kz2}_${kx1},${kz1}`;
+
+            if (!edgeMap.has(key)) {
+                edgeMap.set(key, [kx1, kz1, kx2, kz2]);
+            }
+        };
+
+        for (let k = 0; k < indices.length; k += 3) {
+            const i0 = indices[k] * 3;
+            const i1 = indices[k + 1] * 3;
+            const i2 = indices[k + 2] * 3;
+
+            const v0x = verts[i0], v0y = verts[i0 + 1], v0z = verts[i0 + 2];
+            const v1x = verts[i1], v1y = verts[i1 + 1], v1z = verts[i1 + 2];
+            const v2x = verts[i2], v2y = verts[i2 + 1], v2z = verts[i2 + 2];
+
+            const e1x = v1x - v0x, e1y = v1y - v0y, e1z = v1z - v0z;
+            const e2x = v2x - v0x, e2y = v2y - v0y, e2z = v2z - v0z;
+            const ny = Math.abs(e1z * e2x - e1x * e2z);
+            const nx = e1y * e2z - e1z * e2y;
+            const nz = e1x * e2y - e1y * e2x;
+            const nlen = Math.hypot(nx, ny, nz);
+
+            // If normal is mostly vertical wall (|ny| / nlen < 0.5)
+            if (nlen > 0.001 && (ny / nlen) < 0.5) {
+                addEdge(v0x, v0z, v1x, v1z);
+                addEdge(v1x, v1z, v2x, v2z);
+                addEdge(v2x, v2z, v0x, v0z);
+            }
+        }
+
+        mesh.lines2d = Array.from(edgeMap.values());
+        return mesh.lines2d;
+    }
+
     drawBuildingWireframes(ctx) {
         if (!options_DrawBuildingWireframes || !this.initialized || this.obbs.length === 0) return;
 
         ctx.save();
+
+        const canvasW = ctx.canvas.width;
+        const canvasH = ctx.canvas.height;
+
+        const cyanLines = [];
+        const greenLines = [];
+        const purpleLines = [];
+        const pinkLines = [];
+
+        const cyanPolys = [];
+        const greenPolys = [];
+        const purplePolys = [];
+        const pinkPolys = [];
 
         for (let i = 0; i < this.obbs.length; i++) {
             const obb = this.obbs[i];
@@ -628,38 +769,139 @@ class BuildingHeightmap {
             const cy = YtoCanvas(obb.z);
             const radM = Math.max(obb.width || 8, obb.length || 8) * Math.max(obb.scaleX || 1.0, obb.scaleZ || 1.0);
             const radCanvas = (typeof MapSize !== "undefined" && typeof MapImageDrawSize !== "undefined") ? (radM / MapSize) * MapImageDrawSize + 150 : 200;
-            if (cx < -radCanvas || cx > ctx.canvas.width + radCanvas || cy < -radCanvas || cy > ctx.canvas.height + radCanvas) continue;
+            if (cx < -radCanvas || cx > canvasW + radCanvas || cy < -radCanvas || cy > canvasH + radCanvas) continue;
 
+            // 1. Draw 3D-derived 2D wall lines (with exact doors, interior walls, and openings)
+            if (obb.mesh3d && obb.mesh3d.lines2d && obb.mesh3d.lines2d.length > 0) {
+                const targetLines = obb.ignoreLOS ? pinkLines : (obb.isCustom ? purpleLines : (obb.isVegetation ? greenLines : cyanLines));
+                const lines = obb.mesh3d.lines2d;
+                const rad = -(obb.yaw || 0) * Math.PI / 180;
+                const cosR = Math.cos(rad), sinR = Math.sin(rad);
+                const sx = obb.scaleX || 1.0, sz = obb.scaleZ || 1.0;
+
+                for (let j = 0; j < lines.length; j++) {
+                    const l = lines[j];
+                    const wx1 = obb.x + (l[0] * cosR - l[1] * sinR) * sx;
+                    const wz1 = obb.z + (l[0] * sinR + l[1] * cosR) * sz;
+                    const wx2 = obb.x + (l[2] * cosR - l[3] * sinR) * sx;
+                    const wz2 = obb.z + (l[2] * sinR + l[3] * cosR) * sz;
+
+                    targetLines.push(XtoCanvas(wx1), YtoCanvas(wz1), XtoCanvas(wx2), YtoCanvas(wz2));
+                }
+                continue;
+            }
+
+            // 2. 2D Footprint Polygon Fallback
             const poly = this._getObbCanvasPolygon(obb);
-            if (!poly || poly.length < 3) continue;
-
-            ctx.beginPath();
-            ctx.moveTo(poly[0].x, poly[0].y);
-            for (let j = 1; j < poly.length; j++) {
-                ctx.lineTo(poly[j].x, poly[j].y);
+            if (poly && poly.length >= 3) {
+                const targetPolys = obb.ignoreLOS ? pinkPolys : (obb.isCustom ? purplePolys : (obb.isVegetation ? greenPolys : cyanPolys));
+                targetPolys.push(poly);
             }
-            ctx.closePath();
+        }
 
-            if (obb.ignoreLOS) {
-                ctx.strokeStyle = "#ec4899"; // Pink / Rose (Transparent)
-                ctx.fillStyle   = "rgba(236, 72, 153, 0.20)";
-                ctx.lineWidth   = 1.5;
-            } else if (obb.isCustom) {
-                ctx.strokeStyle = "#a855f7";
-                ctx.fillStyle   = "rgba(168, 85, 247, 0.20)";
-                ctx.lineWidth   = 1.5;
-            } else if (obb.isVegetation) {
-                ctx.strokeStyle = "#10b981"; // Emerald Green for Tree Trunks (40cm)
-                ctx.fillStyle   = "rgba(16, 185, 129, 0.25)";
-                ctx.lineWidth   = 1.2;
-            } else {
-                ctx.strokeStyle = "#00e5ff"; // Bright Cyan for Buildings & Walls
-                ctx.fillStyle   = "rgba(0, 229, 255, 0.12)";
-                ctx.lineWidth   = 1.5;
+        const renderBatch = (lines, polys, strokeColor, fillColor, lineWidth) => {
+            if (polys.length > 0) {
+                ctx.fillStyle = fillColor;
+                ctx.strokeStyle = strokeColor;
+                ctx.lineWidth = lineWidth;
+                ctx.beginPath();
+                for (let i = 0; i < polys.length; i++) {
+                    const p = polys[i];
+                    ctx.moveTo(p[0].x, p[0].y);
+                    for (let j = 1; j < p.length; j++) ctx.lineTo(p[j].x, p[j].y);
+                    ctx.closePath();
+                }
+                ctx.fill();
+                ctx.stroke();
             }
 
-            ctx.fill();
-            ctx.stroke();
+            if (lines.length > 0) {
+                ctx.strokeStyle = strokeColor;
+                ctx.lineWidth = lineWidth;
+                ctx.beginPath();
+                for (let i = 0; i < lines.length; i += 4) {
+                    ctx.moveTo(lines[i], lines[i + 1]);
+                    ctx.lineTo(lines[i + 2], lines[i + 3]);
+                }
+                ctx.stroke();
+            }
+        };
+
+        renderBatch(cyanLines, cyanPolys, "#00e5ff", "rgba(0, 229, 255, 0.12)", 1.2);
+        renderBatch(greenLines, greenPolys, "#10b981", "rgba(16, 185, 129, 0.25)", 1.2);
+        renderBatch(purpleLines, purplePolys, "#a855f7", "rgba(168, 85, 247, 0.20)", 1.5);
+        renderBatch(pinkLines, pinkPolys, "#ec4899", "rgba(236, 72, 153, 0.20)", 1.5);
+
+        // Draw Selected Building Highlight & Name Badge
+        if (this.selectedObb && !this.selectedObb.hidden) {
+            const selPoly = this._getObbCanvasPolygon(this.selectedObb);
+            if (selPoly && selPoly.length >= 3) {
+                ctx.save();
+                ctx.beginPath();
+                ctx.moveTo(selPoly[0].x, selPoly[0].y);
+                for (let j = 1; j < selPoly.length; j++) {
+                    ctx.lineTo(selPoly[j].x, selPoly[j].y);
+                }
+                ctx.closePath();
+
+                ctx.shadowColor = "#fbbf24";
+                ctx.shadowBlur = 12;
+                ctx.fillStyle = "rgba(251, 191, 36, 0.35)";
+                ctx.strokeStyle = "#fbbf24";
+                ctx.lineWidth = 2.5;
+                ctx.fill();
+                ctx.stroke();
+
+                let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+                for (let j = 0; j < selPoly.length; j++) {
+                    if (selPoly[j].x < minX) minX = selPoly[j].x;
+                    if (selPoly[j].x > maxX) maxX = selPoly[j].x;
+                    if (selPoly[j].y < minY) minY = selPoly[j].y;
+                    if (selPoly[j].y > maxY) maxY = selPoly[j].y;
+                }
+                const labelX = (minX + maxX) / 2;
+                const labelY = minY - 8;
+
+                const nameText = this.selectedObb.name || "Unknown Structure";
+                const infoText = `H: ${(this.selectedObb.height || 0).toFixed(1)}m | Y: ${(this.selectedObb.y || 0).toFixed(1)}m | Rot: ${(this.selectedObb.yaw || 0).toFixed(0)}°`;
+
+                ctx.font = "bold 11px sans-serif";
+                const textW = Math.max(ctx.measureText(nameText).width, ctx.measureText(infoText).width) + 18;
+                const boxH = 32;
+                const boxX = labelX - textW / 2;
+                const boxY = labelY - boxH;
+
+                ctx.shadowBlur = 6;
+                ctx.fillStyle = "rgba(10, 15, 26, 0.92)";
+                ctx.strokeStyle = "#fbbf24";
+                ctx.lineWidth = 1.5;
+
+                const r = 4;
+                ctx.beginPath();
+                ctx.moveTo(boxX + r, boxY);
+                ctx.lineTo(boxX + textW - r, boxY);
+                ctx.quadraticCurveTo(boxX + textW, boxY, boxX + textW, boxY + r);
+                ctx.lineTo(boxX + textW, boxY + boxH - r);
+                ctx.quadraticCurveTo(boxX + textW, boxY + boxH, boxX + textW - r, boxY + boxH);
+                ctx.lineTo(boxX + r, boxY + boxH);
+                ctx.quadraticCurveTo(boxX, boxY + boxH, boxX, boxY + boxH - r);
+                ctx.lineTo(boxX, boxY + r);
+                ctx.quadraticCurveTo(boxX, boxY, boxX + r, boxY);
+                ctx.closePath();
+                ctx.fill();
+                ctx.stroke();
+
+                ctx.shadowBlur = 0;
+                ctx.textAlign = "center";
+                ctx.fillStyle = "#fbbf24";
+                ctx.fillText(nameText, labelX, boxY + 14);
+
+                ctx.font = "10px sans-serif";
+                ctx.fillStyle = "#cbd5e1";
+                ctx.fillText(infoText, labelX, boxY + 27);
+
+                ctx.restore();
+            }
         }
 
         ctx.restore();
@@ -753,6 +995,70 @@ class BuildingHeightmap {
         return (t >= 0 && t <= 1 && u >= 0 && u <= 1) ? t : null;
     }
 
+    _intersectRayTriangle(origX, origY, origZ, dirX, dirY, dirZ, v0x, v0y, v0z, v1x, v1y, v1z, v2x, v2y, v2z) {
+        const EPS = 0.0000001;
+        const e1x = v1x - v0x, e1y = v1y - v0y, e1z = v1z - v0z;
+        const e2x = v2x - v0x, e2y = v2y - v0y, e2z = v2z - v0z;
+
+        const px = dirY * e2z - dirZ * e2y;
+        const py = dirZ * e2x - dirX * e2z;
+        const pz = dirX * e2y - dirY * e2x;
+
+        const det = e1x * px + e1y * py + e1z * pz;
+        if (det > -EPS && det < EPS) return null;
+        const invDet = 1.0 / det;
+
+        const tx = origX - v0x, ty = origY - v0y, tz = origZ - v0z;
+        const u = (tx * px + ty * py + tz * pz) * invDet;
+        if (u < 0.0 || u > 1.0) return null;
+
+        const qx = ty * e1z - tz * e1y;
+        const qy = tz * e1x - tx * e1z;
+        const qz = tx * e1y - ty * e1x;
+
+        const v = (dirX * qx + dirY * qy + dirZ * qz) * invDet;
+        if (v < 0.0 || u + v > 1.0) return null;
+
+        const t = (e2x * qx + e2y * qy + e2z * qz) * invDet;
+        return (t >= 0.0 && t <= 1.0) ? t : null;
+    }
+
+    _intersectRayAABB(origX, origY, origZ, dirX, dirY, dirZ, bMinX, bMinY, bMinZ, bMaxX, bMaxY, bMaxZ) {
+        let tmin = -Infinity, tmax = Infinity;
+
+        if (Math.abs(dirX) > 1e-7) {
+            const invD = 1.0 / dirX;
+            let t1 = (bMinX - origX) * invD;
+            let t2 = (bMaxX - origX) * invD;
+            if (t1 > t2) { const tmp = t1; t1 = t2; t2 = tmp; }
+            tmin = Math.max(tmin, t1);
+            tmax = Math.min(tmax, t2);
+            if (tmin > tmax) return false;
+        } else if (origX < bMinX || origX > bMaxX) return false;
+
+        if (Math.abs(dirY) > 1e-7) {
+            const invD = 1.0 / dirY;
+            let t1 = (bMinY - origY) * invD;
+            let t2 = (bMaxY - origY) * invD;
+            if (t1 > t2) { const tmp = t1; t1 = t2; t2 = tmp; }
+            tmin = Math.max(tmin, t1);
+            tmax = Math.min(tmax, t2);
+            if (tmin > tmax) return false;
+        } else if (origY < bMinY || origY > bMaxY) return false;
+
+        if (Math.abs(dirZ) > 1e-7) {
+            const invD = 1.0 / dirZ;
+            let t1 = (bMinZ - origZ) * invD;
+            let t2 = (bMaxZ - origZ) * invD;
+            if (t1 > t2) { const tmp = t1; t1 = t2; t2 = tmp; }
+            tmin = Math.max(tmin, t1);
+            tmax = Math.min(tmax, t2);
+            if (tmin > tmax) return false;
+        } else if (origZ < bMinZ || origZ > bMaxZ) return false;
+
+        return tmax >= 0.0 && tmin <= 1.0;
+    }
+
     _distToSegmentSq(Px, Pz, Ax, Az, Bx, Bz) {
         const l2 = (Bx - Ax) * (Bx - Ax) + (Bz - Az) * (Bz - Az);
         if (l2 === 0) return (Px - Ax) * (Px - Ax) + (Pz - Az) * (Pz - Az);
@@ -774,10 +1080,56 @@ class BuildingHeightmap {
         const dx2 = p2.x - obb.x, dz2 = p2.z - obb.z;
 
         const lx1 = (dx1 * cosR + dz1 * sinR) / sx;
-        const lz1 = (dx1 * sinR - dz1 * cosR) / sz;
+        const lz1 = (-dx1 * sinR + dz1 * cosR) / sz;
         const lx2 = (dx2 * cosR + dz2 * sinR) / sx;
-        const lz2 = (dx2 * sinR - dz2 * cosR) / sz;
+        const lz2 = (-dx2 * sinR + dz2 * cosR) / sz;
 
+        // 1. Exact 3D Triangle Mesh Raycasting (100% physically authentic LOS with door & window openings)
+        if (obb.mesh3d && obb.mesh3d.i && obb.mesh3d.i.length > 0) {
+            const dy1 = (p1.y !== undefined ? p1.y : (obb.y || 0)) - (obb.y || 0);
+            const dy2 = (p2.y !== undefined ? p2.y : (obb.y || 0)) - (obb.y || 0);
+            const dirLX = lx2 - lx1;
+            const dirLY = dy2 - dy1;
+            const dirLZ = lz2 - lz1;
+
+            const b = obb.mesh3d.b;
+            if (b && !this._intersectRayAABB(lx1, dy1, lz1, dirLX, dirLY, dirLZ, b[0] - 0.2, b[1] - 0.2, b[2] - 0.2, b[3] + 0.2, b[4] + 0.2, b[5] + 0.2)) {
+                return null;
+            }
+
+            const verts = obb.mesh3d.v;
+            const indices = obb.mesh3d.i;
+            let closestT = Infinity;
+
+            for (let k = 0; k < indices.length; k += 3) {
+                const i0 = indices[k] * 3;
+                const i1 = indices[k + 1] * 3;
+                const i2 = indices[k + 2] * 3;
+
+                const t = this._intersectRayTriangle(
+                    lx1, dy1, lz1, dirLX, dirLY, dirLZ,
+                    verts[i0], verts[i0 + 1], verts[i0 + 2],
+                    verts[i1], verts[i1 + 1], verts[i1 + 2],
+                    verts[i2], verts[i2 + 1], verts[i2 + 2]
+                );
+                if (t !== null && t < closestT) {
+                    closestT = t;
+                }
+            }
+
+            if (closestT < Infinity) {
+                return {
+                    t: closestT,
+                    hitX: p1.x + (p2.x - p1.x) * closestT,
+                    hitY: (p1.y !== undefined ? p1.y : (obb.y || 0)) + ((p2.y !== undefined ? p2.y : (obb.y || 0)) - (p1.y !== undefined ? p1.y : (obb.y || 0))) * closestT,
+                    hitZ: p1.z + (p2.z - p1.z) * closestT,
+                    obb: obb
+                };
+            }
+            return null;
+        }
+
+        // 2. 2D Vector Footprint Polygon Fallback
         const rawFp = obb.customPolygon || this._getFootprint(obb.name);
         let poly = (rawFp && rawFp.poly) ? rawFp.poly : rawFp;
         if (!poly || poly.length < 3) {
