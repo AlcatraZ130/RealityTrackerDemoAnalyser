@@ -50,24 +50,35 @@ class Building3dRenderer extends Initializable {
 
             varying highp vec3 vNormal;
             varying highp vec4 vColor;
+            varying highp vec3 vWorldPos;
 
             void main(void) {
                 gl_Position = uProjectionMatrix * uViewMatrix * vec4(aVertexPosition, 1.0);
                 vNormal = aVertexNormal;
                 vColor = aVertexColor;
+                vWorldPos = aVertexPosition;
             }
         `;
 
         const fsSource = `
             varying highp vec3 vNormal;
             varying highp vec4 vColor;
+            varying highp vec3 vWorldPos;
 
             void main(void) {
-                // Subtle directional lighting for clean architectural readability
-                highp vec3 lightDir = normalize(vec3(0.5, 0.8, -0.4));
-                highp float diffuse = max(dot(vNormal, lightDir), 0.0);
-                highp float light = 0.72 + 0.28 * diffuse;
-                gl_FragColor = vec4(vColor.rgb * light, 1.0);
+                highp vec3 norm = normalize(vNormal);
+                if (!gl_FrontFacing) norm = -norm;
+
+                highp vec3 sunDir = normalize(vec3(0.45, 0.85, -0.30));
+                highp float sunDiff = max(dot(norm, sunDir), 0.0);
+
+                highp vec3 skyDir = normalize(vec3(-0.40, 0.60, 0.35));
+                highp float skyDiff = max(dot(norm, skyDir), 0.0);
+
+                highp float skyFactor = clamp(norm.y * 0.5 + 0.5, 0.0, 1.0);
+                highp float lighting = 0.27 + (0.42 * sunDiff) + (0.16 * skyDiff) + (0.15 * skyFactor);
+
+                gl_FragColor = vec4(vColor.rgb * lighting, vColor.a);
             }
         `;
 
