@@ -48,6 +48,8 @@ var options_drawAllOrderIcons = false
 var options_UseFallbackRenderer = false
 var options_DrawBuildingWireframes = false // Show real 2D vector footprints of static objects
 var options_Interpolation = true // Smooth interpolation between frames/ticks
+var options_VisionConeRespectsLOS = true // Dynamic visibility shadowcasting against walls and terrain
+var options_CameraTracking = false // Smoothly track selected player
 	//}
 
 
@@ -102,6 +104,9 @@ function update() {
 	lastUpdateTime = now;
 
 	try {
+		if (typeof updateCameraTracking === "function") {
+			updateCameraTracking();
+		}
 		updateLogic(frameTime);	
 		animations.update(frameTime);
 		activeRenderer.update(frameTime);
@@ -230,7 +235,11 @@ function onKeyDown(e)
 			toggleSubMenu("vehicles")
 			break
 		case 84: //t
-			toggleSubMenu("chat")
+			if (typeof toggleCameraTracking === "function") {
+				toggleCameraTracking();
+			} else {
+				toggleSubMenu("chat");
+			}
 			break
 		case 82: //r
 			toggleSubMenu("revives")

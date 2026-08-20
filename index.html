@@ -397,6 +397,7 @@
 							</div>
 						</div>
 						<label title="Draws a field of view cone representing the player's screen. If an enemy is inside this cone, they are considered visible."><input type="checkbox" checked="" id="options_DrawVisionCone" onclick="checkboxClicked(this)"> Vision Cone</label><br>
+						<label title="Deforms and casts the vision cone dynamically against building walls and terrain elevations in real-time."><input type="checkbox" checked="" id="options_VisionConeRespectsLOS" onclick="checkboxClicked(this)"> Cone with LOS</label><br>
 						<label title="Draws a main blue gaze laser in the player's view direction. The laser turns red whenever the player is aiming at an enemy that is blocked by terrain or buildings. Also draws orange threat lasers to enemies that are visible inside the vision cone. Disabling this option also hides the gaze laser."><input type="checkbox" checked="" id="options_DrawThreatLasers" onclick="checkboxClicked(this)"> Threat Lasers</label><br>
 						<label title="Makes the vision cone, gaze laser, and threat lasers respect terrain and building line-of-sight."><input type="checkbox" checked="" id="options_ConeRespectsTerrain" onclick="checkboxClicked(this)"> Terrain/Building LOS</label><br>
 						<label title="Alerts when a kill occurs without direct Line-of-Sight (outside vision cone or blocked by building wall/terrain)."><input type="checkbox" id="options_DetectNoLOSKills" onclick="checkboxClicked(this)"> No-LOS Kill Alert</label><br>
@@ -422,6 +423,7 @@
 						</div>
 						<b id="lblAnalyserToolsHeader">Analyser Tools & Debug</b><br>
 						<label title="Shows real-time calculated movement speed (km/h) and stance/acoustic state for the selected player or vehicle."><input type="checkbox" id="options_ShowSelectionSpeed" checked onclick="checkboxClicked(this)"> Selected Entity Speed & Acoustic State</label><br>
+						<label title="Smoothly follows the selected player with the camera. Press 'T' to toggle. Free on deselect, smooth transition when switching targets."><input type="checkbox" id="options_CameraTracking" onclick="checkboxClicked(this)"> Camera Tracking (Follow [T])</label><br>
 						<label title="Shows real 2D vector footprints of static objects (buildings, walls, structures) extracted from the game's 3D collision meshes."><input type="checkbox" id="options_DrawBuildingWireframes" checked onclick="checkboxClicked(this); buildingHeightmap.toggleObbEditorPanel();"> Building Footprints</label><br>
 
 						<label title="Superimposes a colorized heightmap terrain grid over the map to verify elevation."><input type="checkbox" id="options_DrawHeightmapOverlay" onclick="checkboxClicked(this)"> Heightmap Overlay</label><br>
@@ -550,10 +552,10 @@
 			<div style="background: #2c2f34; border: 1px solid #34313a; border-radius: 4px; width: 560px; max-width: 90vw; max-height: 82vh; display: flex; flex-direction: column; box-shadow: 0 5px 20px rgba(0,0,0,0.7); color: rgb(239, 238, 241); font-family: 'Arial', sans-serif;">
 				<div style="background: #433f4a; padding: 10px 14px; border-bottom: 1px solid #34313a; display: flex; justify-content: space-between; align-items: center; border-radius: 3px 3px 0 0;">
 					<div style="font-weight: bold; font-size: 13px; color: #fff; display: flex; align-items: center; gap: 10px;">
-						<span>BVR Timer List</span>
+						<span id="lblBvrModalTitle">BVR Timer List</span>
 						<div style="display: flex; background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.15); border-radius: 3px; padding: 2px; gap: 2px;">
 							<button id="btnBvrModeIndividual" type="button" onclick="switchBVRFocusMode('individual')" style="background: #00e5ff; color: #000; border: none; border-radius: 2px; font-size: 10px; font-weight: bold; padding: 2px 8px; cursor: pointer;">Individual</button>
-							<button id="btnBvrModeAcumulado" type="button" onclick="switchBVRFocusMode('acumulado')" style="background: transparent; color: #aaa; border: none; border-radius: 2px; font-size: 10px; font-weight: bold; padding: 2px 8px; cursor: pointer;">Acumulado</button>
+							<button id="btnBvrModeAcumulado" type="button" onclick="switchBVRFocusMode('acumulado')" style="background: transparent; color: #aaa; border: none; border-radius: 2px; font-size: 10px; font-weight: bold; padding: 2px 8px; cursor: pointer;">Cumulative</button>
 						</div>
 					</div>
 					<button onclick="closeBVRFocusModal()" style="background: none; border: none; color: #ccc; font-size: 18px; font-weight: bold; cursor: pointer; padding: 0 4px;">&times;</button>
@@ -562,7 +564,7 @@
 					<!-- Dynamic list populated via JS -->
 				</div>
 				<div style="background: #23252a; padding: 8px 14px; border-top: 1px solid #34313a; text-align: right; border-radius: 0 0 3px 3px;">
-					<button onclick="closeBVRFocusModal()" style="background: #433f4a; color: #fff; border: 1px solid #555; font-weight: bold; font-size: 11px; padding: 5px 14px; border-radius: 3px; cursor: pointer;">Cerrar</button>
+					<button id="btnBvrModalClose" onclick="closeBVRFocusModal()" style="background: #433f4a; color: #fff; border: 1px solid #555; font-weight: bold; font-size: 11px; padding: 5px 14px; border-radius: 3px; cursor: pointer;">Close</button>
 				</div>
 			</div>
 		</div>

@@ -152,10 +152,15 @@ function Wheel(event)
 	if (MouseIsDown || event.ctrlKey)
 		return;
 
+	let pivotPos = activeRenderer.getMousePos(event);
+	if (typeof options_CameraTracking !== "undefined" && options_CameraTracking && typeof SelectedPlayer !== "undefined" && SelectedPlayer !== SELECTED_NOTHING) {
+		pivotPos = { X: Canvas.width / 2, Y: Canvas.height / 2 };
+	}
+
 	if (event.deltaY < 0)
-		new ZoomAnimation(activeRenderer.getMousePos(event), 1.05)
+		new ZoomAnimation(pivotPos, 1.05)
 	else
-		new ZoomAnimation(activeRenderer.getMousePos(event), 0.95)
+		new ZoomAnimation(pivotPos, 0.95)
 }
 
 // -- Zoom animation system

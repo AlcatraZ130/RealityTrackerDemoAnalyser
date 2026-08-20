@@ -6,11 +6,13 @@
 // Reality Tracker Demo Analyser Engine
 // Vision cone, Threat Lasers, Snap Detector, No-LOS Kill Alerts & BVR Lasers
 var options_DrawVisionCone = false;
+var options_VisionConeRespectsLOS = true;
 var options_VisionConeRange = 150;
 var options_VisionConeAngle = 94.9;
 
 var options_DrawThreatLasers = false;
 var options_ConeRespectsTerrain = true;
+var options_CameraTracking = false;
 
 var options_HighlightSnaps = false;
 var Snap_LockToleranceDegrees = 5;
@@ -468,15 +470,147 @@ function getPlayersInVisionCone(p) {
 		if (useTerrain && !hasTerrainLOS(p.X, p.Y, p.Z, other.X, other.Y, other.Z))
 			continue;
 
-		results.push([other, worldDist, angle]);
+results.push([other, worldDist, angle]);
 	}
 	return results;
 }
 
+function getPlayerWorldPos(p) {
+	if (!p) return { x: 0, y: 0, z: 0, rot: 0 };
+	if (p.vehicleid >= 0 && typeof AllVehicles !== 'undefined' && AllVehicles[p.vehicleid]) {
+		const v = AllVehicles[p.vehicleid];
+		const vx = typeof v.getX === "function" ? v.getX() : (v.X || 0);
+		const vy = typeof v.getY === "function" ? v.getY() : (v.Y || 0);
+		const vz = typeof v.getZ === "function" ? v.getZ() : (v.Z || 0);
+		const vRot = typeof v.getRotation === "function" ? v.getRotation() : (v.rotation || 0);
+		const pRot = typeof p.getRotation === "function" ? p.getRotation() : (p.rotation || 0);
+
+		// If driver or unrotated gunner, follow vehicle rotation; otherwise use gunner rotation
+		const rot = (p.vehicleSlot === 0 || p.rotation == null || p.rotation === 0) ? vRot : pRot;
+		return { x: vx, y: vy, z: vz, rot: rot };
+	}
+	return {
+		x: typeof p.getX === "function" ? p.getX() : (p.X || 0),
+		y: typeof p.getY === "function" ? p.getY() : (p.Y || 0),
+		z: typeof p.getZ === "function" ? p.getZ() : (p.Z || 0),
+		rot: typeof p.getRotation === "function" ? p.getRotation() : (p.rotation || 0)
+	};
+}
+
+function drawDynamicLOSVisionCone(p) {
+	if (!p) return;
+	const pInfo = getPlayerWorldPos(p);
+	const worldPx = pInfo.x;
+	const worldPz = pInfo.z;
+	const worldPy = (pInfo.y !== undefined && !isNaN(pInfo.y) ? pInfo.y : 0) + 1.65;
+	const rot = pInfo.rot;
+
+	const px = XtoCanvas(worldPx);
+	const py = YtoCanvas(worldPz);
+	const rangeM = options_VisionConeRange;
+	const halfAngle = options_VisionConeAngle / 2;
+
+	// 64 radial ray slices for ultra-smooth circular profile
+	const numSlices = 64;
+	const angleStep = options_VisionConeAngle / numSlices;
+	const startAngle = rot - halfAngle;
+
+	const polyPoints = [];
+	const hasBuildings = (typeof buildingHeightmap !== 'undefined' && buildingHeightmap.initialized && buildingHeightmap.obbs.length > 0);
+	const hasTerrain = (typeof heightmap !== 'undefined' && heightmap.initialized && heightmap.heightdataview);
+
+	for (let i = 0; i <= numSlices; i++) {
+		const currentAngleDeg = startAngle + i * angleStep;
+		const rad = currentAngleDeg / 180 * Math.PI;
+
+		// Correct world direction vector: +X is East, +Z is North
+		const dirX = Math.sin(rad);
+		const dirZ = Math.cos(rad);
+
+		const targetWorldX = worldPx + dirX * rangeM;
+		const targetWorldZ = worldPz + dirZ * rangeM;
+
+		let closestFrac = 1.0;
+		let hitWorldX = targetWorldX;
+		let hitWorldZ = targetWorldZ;
+
+		// 1. Raycast against 2D building collision boxes / walls
+		if (hasBuildings) {
+			const bHit = buildingHeightmap.getRayCollision(worldPx, worldPy, worldPz, targetWorldX, worldPy, targetWorldZ, 0);
+			if (bHit && bHit.t < closestFrac) {
+				closestFrac = bHit.t;
+				hitWorldX = bHit.hitX;
+				hitWorldZ = bHit.hitZ;
+			}
+		}
+
+		// 2. Smooth Raymarching against terrain heightmap with continuous sub-meter interpolation
+		if (hasTerrain) {
+			const maxDist = rangeM * closestFrac;
+			const stepM = 3.0;
+			const steps = Math.floor(maxDist / stepM);
+			let prevDist = 0;
+			let prevTerrainH = heightmap.getHeightFromCoords(worldPx, worldPz);
+
+			for (let s = 1; s <= steps; s++) {
+				const dist = s * stepM;
+				const frac = dist / rangeM;
+				if (frac >= closestFrac) break;
+
+				const sampleX = worldPx + dirX * dist;
+				const sampleZ = worldPz + dirZ * dist;
+				const terrainH = heightmap.getHeightFromCoords(sampleX, sampleZ);
+
+				if (terrainH !== -Infinity && !isNaN(terrainH) && terrainH >= worldPy) {
+					// Continuous linear interpolation for sub-meter smoothness (no discrete jumping!)
+					const diffCurr = terrainH - worldPy;
+					const diffPrev = worldPy - (prevTerrainH !== -Infinity && !isNaN(prevTerrainH) ? prevTerrainH : (worldPy - 0.5));
+					const weight = (diffPrev + diffCurr > 0) ? (diffPrev / (diffPrev + diffCurr)) : 0.5;
+					const exactDist = prevDist + stepM * weight;
+
+					closestFrac = exactDist / rangeM;
+					hitWorldX = worldPx + dirX * exactDist;
+					hitWorldZ = worldPz + dirZ * exactDist;
+					break;
+				}
+
+				prevDist = dist;
+				prevTerrainH = terrainH;
+			}
+		}
+
+		polyPoints.push({
+			x: XtoCanvas(hitWorldX),
+			y: YtoCanvas(hitWorldZ)
+		});
+	}
+
+	Context.save();
+	Context.beginPath();
+	Context.moveTo(px, py);
+	for (let i = 0; i < polyPoints.length; i++) {
+		Context.lineTo(polyPoints[i].x, polyPoints[i].y);
+	}
+	Context.closePath();
+
+	Context.fillStyle = "rgba(255, 255, 0, 0.06)";
+	Context.strokeStyle = "rgba(255, 220, 0, 0.7)";
+	Context.lineWidth = 1;
+	Context.fill();
+	Context.stroke();
+	Context.restore();
+}
+
 function drawVisionCone(p) {
-	const x = p.getCanvasX();
-	const y = p.getCanvasY();
-	const rot = p.getRotation();
+	if (options_VisionConeRespectsLOS) {
+		drawDynamicLOSVisionCone(p);
+		return;
+	}
+
+	const pInfo = getPlayerWorldPos(p);
+	const x = XtoCanvas(pInfo.x);
+	const y = YtoCanvas(pInfo.z);
+	const rot = pInfo.rot;
 	const range = lengthtoCanvas(options_VisionConeRange);
 	const half = options_VisionConeAngle / 2;
 
@@ -521,6 +655,57 @@ function drawThreatLasers(p) {
 		Context.lineWidth = 1.5;
 		Context.stroke();
 		Context.restore();
+	}
+}
+
+function toggleCameraTracking(forceState = null) {
+	if (forceState !== null) {
+		options_CameraTracking = !!forceState;
+	} else {
+		options_CameraTracking = !options_CameraTracking;
+	}
+	const chk = document.getElementById("options_CameraTracking");
+	if (chk) chk.checked = options_CameraTracking;
+	if (typeof changeSetting === "function") {
+		changeSetting("options_CameraTracking", options_CameraTracking);
+	}
+	requestUpdate();
+}
+
+function updateCameraTracking() {
+	if (!options_CameraTracking) return;
+	if (typeof is3DMode !== 'undefined' && is3DMode) return;
+	if (typeof SelectedPlayer === 'undefined' || SelectedPlayer == SELECTED_NOTHING) return;
+	if (typeof MouseIsDown !== 'undefined' && MouseIsDown) return;
+
+	const p = AllPlayers[SelectedPlayer];
+	if (!p || p.isJoining) return;
+
+	const pInfo = getPlayerWorldPos(p);
+	const worldX = pInfo.x;
+	const worldZ = pInfo.z;
+	if (worldX == null || isNaN(worldX) || worldZ == null || isNaN(worldZ)) return;
+
+	// Calculate un-offset zoomed coordinate
+	const uX = (worldX / MapSize) + 512;
+	const uY = (worldZ / -MapSize) + 512;
+	const zX = uX * CameraZoom;
+	const zY = uY * CameraZoom;
+
+	// Exact target camera offset to center target at (Canvas.width / 2, Canvas.height / 2)
+	const targetCameraX = (Canvas.width / 2) - zX;
+	const targetCameraY = (Canvas.height / 2) - zY;
+
+	const dx = targetCameraX - CameraX;
+	const dy = targetCameraY - CameraY;
+
+	// Smooth silky glide (0.15 lerp factor)
+	if (Math.abs(dx) > 0.1 || Math.abs(dy) > 0.1) {
+		const lerpFactor = 0.15;
+		CameraX += dx * lerpFactor;
+		CameraY += dy * lerpFactor;
+		if (typeof clampCamera === "function") clampCamera();
+		requestUpdate();
 	}
 }
 
@@ -1355,10 +1540,37 @@ var ANALYSER_I18N = {
 		header: "Demo Analyser",
 		toolsHeader: "Analyser Tools & Debug",
 		coneRangeLabel: "Cone Range:",
+		bvrBtnText: "BVR Timer List",
+		bvrBtnTitle: "View aiming focus timer leaderboard for all players",
+		bvrModalTitle: "BVR Timer List",
+		bvrModeIndividual: "Individual",
+		bvrModeCumulative: "Cumulative",
+		bvrModalClose: "Close",
+		bvrNoData: "No telemetry data available.",
+		bvrSubIndividual: "Max Continuous Burst",
+		bvrSubCumulative: "Cumulative Match Focus",
+		bvrRankingPrefix: "BVR Leaderboard",
+		bvrTotalPlayers: "Total:",
+		bvrPlayersWord: "players",
+		bvrHintText: 'Click "Select" to focus on map',
+		bvrColRank: "#",
+		bvrColPlayer: "Player",
+		bvrColTeam: "Team",
+		bvrColTimeMax: "Max Focus Time",
+		bvrColTimeTotal: "Total Cumulative Time",
+		bvrColAction: "Action",
+		bvrTeam1: "Team 1",
+		bvrTeam2: "Team 2",
+		bvrTeamSpectator: "Spectator",
+		bvrBtnSelect: "Select",
 		opts: {
 			options_DrawVisionCone: {
 				label: "Vision Cone",
 				title: "Draws a field of view cone representing the player's screen. If an enemy is inside this cone, they are considered visible."
+			},
+			options_VisionConeRespectsLOS: {
+				label: "Cone with LOS",
+				title: "Deforms and casts the vision cone dynamically against building walls and terrain elevations in real-time."
 			},
 			options_DrawThreatLasers: {
 				label: "Threat Lasers",
@@ -1388,6 +1600,22 @@ var ANALYSER_I18N = {
 				label: "Timeline",
 				title: "Displays a timeline track of engagements and events for the selected player at the bottom of the screen."
 			},
+			options_DrawMovementSoundAuras: {
+				label: "Movement Sound Radii",
+				title: "Shows footstep sound radii based on player speed (12m crouch, 20m walk, 35m sprint) and vehicle engine sound states."
+			},
+			options_DrawShootingSoundShockwaves: {
+				label: "Shooting Sound Shockwaves",
+				title: "Displays expanding sound wave shockwaves when players shoot or hit targets (300m small arms, 750m 30mm cannons, 1500m tank main guns)."
+			},
+			options_ShowSelectionSpeed: {
+				label: "Selected Entity Speed & Acoustic State",
+				title: "Shows real-time calculated movement speed (km/h) and stance/acoustic state for the selected player or vehicle."
+			},
+			options_CameraTracking: {
+				label: "Camera Tracking (Follow [T])",
+				title: "Smoothly follows the selected player with the camera. Press 'T' to toggle. Free on deselect, smooth transition when switching targets."
+			},
 			options_DrawBuildingWireframes: {
 				label: "Building Footprints",
 				title: "Shows real 2D vector footprints of static objects (buildings, walls, structures) extracted from the game's 3D collision meshes."
@@ -1406,10 +1634,37 @@ var ANALYSER_I18N = {
 		header: "Demo Analyser",
 		toolsHeader: "Herramientas de An\u00e1lisis",
 		coneRangeLabel: "Rango del Cono:",
+		bvrBtnText: "Lista Tiempos BVR",
+		bvrBtnTitle: "Ver escalaf\u00f3n de tiempos de enfoque de todos los jugadores",
+		bvrModalTitle: "Lista de Tiempos BVR",
+		bvrModeIndividual: "Individual",
+		bvrModeCumulative: "Acumulado",
+		bvrModalClose: "Cerrar",
+		bvrNoData: "No hay datos de telemetr\u00eda disponibles.",
+		bvrSubIndividual: "R\u00e1faga M\u00e1xima Continua",
+		bvrSubCumulative: "Enfoque Acumulado en la Partida",
+		bvrRankingPrefix: "Escalaf\u00f3n BVR",
+		bvrTotalPlayers: "Total:",
+		bvrPlayersWord: "jugadores",
+		bvrHintText: 'Haz clic en "Seleccionar" para centrar en el mapa',
+		bvrColRank: "#",
+		bvrColPlayer: "Jugador",
+		bvrColTeam: "Bando",
+		bvrColTimeMax: "Tiempo Max. Enfoque",
+		bvrColTimeTotal: "Tiempo Total Acumulado",
+		bvrColAction: "Acci\u00f3n",
+		bvrTeam1: "Equipo 1",
+		bvrTeam2: "Equipo 2",
+		bvrTeamSpectator: "Espectador",
+		bvrBtnSelect: "Seleccionar",
 		opts: {
 			options_DrawVisionCone: {
 				label: "Cono de Visi\u00f3n",
 				title: "Proyecta el cono del campo de visi\u00f3n en pantalla del jugador seleccionado para determinar qu\u00e9 enemigos entran en su encuadre."
+			},
+			options_VisionConeRespectsLOS: {
+				label: "Cono con LOS",
+				title: "Calcula en tiempo real la oclusi\u00f3n del cono de visi\u00f3n contra muros de edificios y crestas del relieve."
 			},
 			options_DrawThreatLasers: {
 				label: "L\u00e1seres de Amenaza",
@@ -1433,11 +1688,27 @@ var ANALYSER_I18N = {
 			},
 			options_DrawFlankChronometer: {
 				label: "Tiempo de Reacci\u00f3n en Combate",
-				title: "Crea un \u00e1rea t\u00e1ctica alrededor del jugador y mide en segundos su tiempo de respuesta tras encarar o detectar a un enemigo."
+				title: "Crea un \u00e1rea t\u00e1tica alrededor del jugador y mide en segundos su tiempo de respuesta tras encarar o detectar a un enemigo."
 			},
 			options_DrawTimeline: {
 				label: "L\u00ednea de Tiempo T\u00e1ctica",
 				title: "Muestra una barra de eventos cronol\u00f3gica en la parte inferior para navegar instant\u00e1neamente entre combates y enfrentamientos."
+			},
+			options_DrawMovementSoundAuras: {
+				label: "Radios de Sonido de Movimiento",
+				title: "Muestra los radios de sonido de pisadas seg\u00fan la velocidad (12m agachado, 20m caminando, 35m corriendo) y motores de veh\u00edculos."
+			},
+			options_DrawShootingSoundShockwaves: {
+				label: "Ondas Ac\u00fasticas de Disparos",
+				title: "Muestra ondas ac\u00fasticas expansivas al disparar (300m armas ligeras, 750m ca\u00f1ones de 30mm, 1500m ca\u00f1ones de tanque)."
+			},
+			options_ShowSelectionSpeed: {
+				label: "Velocidad y Estado Ac\u00fastico",
+				title: "Muestra la velocidad calculada en tiempo real (km/h) y el estado ac\u00fastico de la entidad seleccionada."
+			},
+			options_CameraTracking: {
+				label: "Seguimiento de C\u00e1mara (Tecla [T])",
+				title: "Sigue fluidamente al jugador seleccionado con la c\u00e1mara. Presiona 'T' para activar/desactivar. Libre al deseleccionar, transici\u00f3n suave entre objetivos."
 			},
 			options_DrawBuildingWireframes: {
 				label: "Huellas Vectoriales 2D",
@@ -1457,10 +1728,37 @@ var ANALYSER_I18N = {
 		header: "Demo Analyser",
 		toolsHeader: "Ferramentas de An\u00e1lise",
 		coneRangeLabel: "Alcance do Cone:",
+		bvrBtnText: "Lista Tempos BVR",
+		bvrBtnTitle: "Ver classifica\u00e7\u00e3o de tempos de foco de todos os jogadores",
+		bvrModalTitle: "Lista de Tempos BVR",
+		bvrModeIndividual: "Individual",
+		bvrModeCumulative: "Acumulado",
+		bvrModalClose: "Fechar",
+		bvrNoData: "Nenhum dado de telemetria dispon\u00edvel.",
+		bvrSubIndividual: "Rajada M\u00e1xima Cont\u00ednua",
+		bvrSubCumulative: "Foco Acumulado na Partida",
+		bvrRankingPrefix: "Classifica\u00e7\u00e3o BVR",
+		bvrTotalPlayers: "Total:",
+		bvrPlayersWord: "jogadores",
+		bvrHintText: 'Clique em "Selecionar" para focar no mapa',
+		bvrColRank: "#",
+		bvrColPlayer: "Jogador",
+		bvrColTeam: "Equipe",
+		bvrColTimeMax: "Tempo M\u00e1x. Foco",
+		bvrColTimeTotal: "Tempo Total Acumulado",
+		bvrColAction: "A\u00e7\u00e3o",
+		bvrTeam1: "Equipe 1",
+		bvrTeam2: "Equipe 2",
+		bvrTeamSpectator: "Espectador",
+		bvrBtnSelect: "Selecionar",
 		opts: {
 			options_DrawVisionCone: {
 				label: "Cone de Vis\u00e3o",
 				title: "Projeta o cone do campo de vis\u00e3o da tela do jogador para determinar quais inimigos est\u00e3o vis\u00edveis."
+			},
+			options_VisionConeRespectsLOS: {
+				label: "Cone com LOS",
+				title: "Calcula em tempo real a oclus\u00e3o do cone de vis\u00e3o contra paredes de edif\u00edcios e eleva\u00e7\u00f5es do terreno."
 			},
 			options_DrawThreatLasers: {
 				label: "Lasers de Amea\u00e7a",
@@ -1489,6 +1787,22 @@ var ANALYSER_I18N = {
 			options_DrawTimeline: {
 				label: "Linha do Tempo T\u00e1tica",
 				title: "Exibe uma barra cronol\u00f3gica de eventos na parte inferior para navegar instantaneamente entre engajamentos."
+			},
+			options_DrawMovementSoundAuras: {
+				label: "Raios de Som de Movimento",
+				title: "Exibe os raios de som de passos com base na velocidade (12m agachado, 20m andando, 35m correndo) e motores de ve\u00edculos."
+			},
+			options_DrawShootingSoundShockwaves: {
+				label: "Ondas Ac\u00fasticas de Disparos",
+				title: "Exibe ondas ac\u00fasticas expansivas ao disparar (300m armas leves, 750m canh\u00f5es de 30mm, 1500m canh\u00f5es de tanque)."
+			},
+			options_ShowSelectionSpeed: {
+				label: "Velocidade e Estado Ac\u00fastico",
+				title: "Exibe a velocidade calculada em tempo real (km/h) e o estado ac\u00fastico da entidade selecionada."
+			},
+			options_CameraTracking: {
+				label: "Seguimento de C\u00e2mera (Tecla [T])",
+				title: "Segue suavemente o jogador selecionado com a c\u00e2mera. Pressione 'T' para alternar. Livre ao desmarcar, transi\u00e7\u00e3o suave entre alvos."
 			},
 			options_DrawBuildingWireframes: {
 				label: "Pegadas Vetoriais 2D",
@@ -1522,6 +1836,24 @@ function setAnalyserLanguage(lang) {
 
 	const btnHeat = document.getElementById("btnComputeVisionHeatmap");
 	if (btnHeat) btnHeat.textContent = data.btnHeatmap;
+
+	const btnBvr = document.getElementById("btnBVRFocusAlerts");
+	if (btnBvr) {
+		btnBvr.textContent = data.bvrBtnText;
+		btnBvr.title = data.bvrBtnTitle;
+	}
+
+	const lblBvrTitle = document.getElementById("lblBvrModalTitle");
+	if (lblBvrTitle) lblBvrTitle.textContent = data.bvrModalTitle;
+
+	const btnInd = document.getElementById("btnBvrModeIndividual");
+	if (btnInd) btnInd.textContent = data.bvrModeIndividual;
+
+	const btnAcu = document.getElementById("btnBvrModeAcumulado");
+	if (btnAcu) btnAcu.textContent = data.bvrModeCumulative;
+
+	const btnBvrClose = document.getElementById("btnBvrModalClose");
+	if (btnBvrClose) btnBvrClose.textContent = data.bvrModalClose;
 
 	for (const [optId, info] of Object.entries(data.opts)) {
 		const elem = document.getElementById(optId);
@@ -1557,6 +1889,11 @@ function setAnalyserLanguage(lang) {
 			}
 		}
 	});
+
+	const bvrModal = document.getElementById("bvrFocusModal");
+	if (bvrModal && bvrModal.style.display !== "none") {
+		openBVRFocusModal();
+	}
 }
 
 var currentBVRFocusMode = "individual";
@@ -1588,9 +1925,13 @@ function openBVRFocusModal() {
 
 	modal.style.display = "flex";
 
+	const i18n = ANALYSER_I18N[currentAnalyserLang] || ANALYSER_I18N.EN;
+
 	const btnInd = document.getElementById("btnBvrModeIndividual");
 	const btnAcu = document.getElementById("btnBvrModeAcumulado");
 	if (btnInd && btnAcu) {
+		btnInd.textContent = i18n.bvrModeIndividual;
+		btnAcu.textContent = i18n.bvrModeCumulative;
 		if (currentBVRFocusMode === "individual") {
 			btnInd.style.background = "#00e5ff";
 			btnInd.style.color = "#000";
@@ -1604,13 +1945,19 @@ function openBVRFocusModal() {
 		}
 	}
 
+	const lblBvrTitle = document.getElementById("lblBvrModalTitle");
+	if (lblBvrTitle) lblBvrTitle.textContent = i18n.bvrModalTitle;
+
+	const btnBvrClose = document.getElementById("btnBvrModalClose");
+	if (btnBvrClose) btnBvrClose.textContent = i18n.bvrModalClose;
+
 	if (typeof analyserPreloader !== "undefined") {
 		analyserPreloader.applyFocusToPlayers();
 	}
 
 	const focusPlayerMap = new Map();
 
-	// 1. Gather preloaded states from analyserPreloader (available immediately on load)
+	// 1. Gather preloaded states from analyserPreloader
 	if (typeof analyserPreloader !== "undefined" && analyserPreloader.playerStates) {
 		for (const [id, s] of analyserPreloader.playerStates) {
 			const maxSec = analyserPreloader.playerMaxFocusMap ? (analyserPreloader.playerMaxFocusMap.get(id) || 0) : 0;
@@ -1656,26 +2003,26 @@ function openBVRFocusModal() {
 	}
 
 	if (allFocusPlayers.length === 0) {
-		body.innerHTML = '<div style="text-align: center; color: #aaa; padding: 20px; font-family: Arial, sans-serif;">No hay datos de telemetría disponibles.</div>';
+		body.innerHTML = `<div style="text-align: center; color: #aaa; padding: 20px; font-family: Arial, sans-serif;">${i18n.bvrNoData}</div>`;
 		return;
 	}
 
-	const colTitle = isIndividual ? "Tiempo Max. Enfoque" : "Tiempo Total Acumulado";
-	const modeSubTitle = isIndividual ? "Ráfaga Máxima Continua" : "Enfoque Acumulado en la Partida";
+	const colTitle = isIndividual ? i18n.bvrColTimeMax : i18n.bvrColTimeTotal;
+	const modeSubTitle = isIndividual ? i18n.bvrSubIndividual : i18n.bvrSubCumulative;
 
 	let html = `
 		<div style="margin-bottom: 8px; font-size: 11px; color: #aaa; display: flex; justify-content: space-between; align-items: center; font-family: Arial, sans-serif;">
-			<span>Escalafón BVR - ${modeSubTitle} (Total: <b>${allFocusPlayers.length}</b> jugadores):</span>
-			<span style="font-size: 10px; color: #00e5ff;">Haz clic en "Seleccionar" para centrar en el mapa</span>
+			<span>${i18n.bvrRankingPrefix} - ${modeSubTitle} (${i18n.bvrTotalPlayers} <b>${allFocusPlayers.length}</b> ${i18n.bvrPlayersWord}):</span>
+			<span style="font-size: 10px; color: #00e5ff;">${i18n.bvrHintText}</span>
 		</div>
 		<table style="width: 100%; border-collapse: collapse; font-size: 11px; font-family: Arial, sans-serif; background: #2c2f34; color: rgb(239, 238, 241); border: 1px solid #34313a;">
 			<thead>
 				<tr style="background: #433f4a; color: #fff; text-align: left; height: 24px;">
-					<th style="padding: 2px 8px; border-bottom: 1px solid #34313a; width: 40px;">#</th>
-					<th style="padding: 2px 8px; border-bottom: 1px solid #34313a;">Jugador</th>
-					<th style="padding: 2px 8px; border-bottom: 1px solid #34313a;">Bando</th>
+					<th style="padding: 2px 8px; border-bottom: 1px solid #34313a; width: 40px;">${i18n.bvrColRank}</th>
+					<th style="padding: 2px 8px; border-bottom: 1px solid #34313a;">${i18n.bvrColPlayer}</th>
+					<th style="padding: 2px 8px; border-bottom: 1px solid #34313a;">${i18n.bvrColTeam}</th>
 					<th style="padding: 2px 8px; border-bottom: 1px solid #34313a; text-align: right;">${colTitle}</th>
-					<th style="padding: 2px 8px; border-bottom: 1px solid #34313a; text-align: center; width: 90px;">Acción</th>
+					<th style="padding: 2px 8px; border-bottom: 1px solid #34313a; text-align: center; width: 90px;">${i18n.bvrColAction}</th>
 				</tr>
 			</thead>
 			<tbody>
@@ -1687,7 +2034,7 @@ function openBVRFocusModal() {
 		const secs = Math.floor(targetSec % 60);
 		const timeStr = mins > 0 ? `${mins}m ${secs}s` : `${targetSec.toFixed(1)}s`;
 		const teamColor = p.team === 1 ? "#FF3300" : p.team === 2 ? "#2299FF" : "#aaaaaa";
-		const teamLabel = p.team === 1 ? "Equipo 1" : p.team === 2 ? "Equipo 2" : "Espectador";
+		const teamLabel = p.team === 1 ? i18n.bvrTeam1 : p.team === 2 ? i18n.bvrTeam2 : i18n.bvrTeamSpectator;
 		const rowBg = idx % 2 === 0 ? "rgba(255,255,255,0.02)" : "rgba(0,0,0,0.15)";
 		const highlightColor = targetSec >= 60 ? "#ffcc00" : targetSec >= 30 ? "#00e5ff" : "#ffffff";
 
@@ -1698,7 +2045,7 @@ function openBVRFocusModal() {
 				<td style="padding: 2px 8px;"><span style="color: ${teamColor}; font-weight: bold;">● ${teamLabel}</span></td>
 				<td style="padding: 2px 8px; text-align: right; color: ${highlightColor}; font-weight: bold;">${timeStr}</td>
 				<td style="padding: 2px 8px; text-align: center;">
-					<button onclick="selectPlayerFromBVRModal(${p.id})" style="background: #00e5ff; color: #000; border: none; border-radius: 2px; font-size: 10px; font-weight: bold; padding: 2px 8px; cursor: pointer;">Seleccionar</button>
+					<button onclick="selectPlayerFromBVRModal(${p.id})" style="background: #00e5ff; color: #000; border: none; border-radius: 2px; font-size: 10px; font-weight: bold; padding: 2px 8px; cursor: pointer;">${i18n.bvrBtnSelect}</button>
 				</td>
 			</tr>
 		`;
