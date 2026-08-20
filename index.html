@@ -375,7 +375,7 @@
 						<input type="checkbox" checked="" id="options_health_players" onclick="checkboxClicked(this)">
 						Player Health
 						<br>
-						<input type="checkbox" id="options_drawAllOrderIcons" onclick="checkboxClicked(this)">
+						<input type="checkbox" checked="" id="options_drawAllOrderIcons" onclick="checkboxClicked(this)">
 						Orders
 						<br>
 						<input type="checkbox" checked="" id="options_Interpolation" onclick="checkboxClicked(this)" title="Interpola suavemente las posiciones y ángulos entre ticks. En demos de alta frecuencia se puede apagar para ver los frames 100% reales del servidor.">
@@ -396,16 +396,16 @@
 								<button id="btnLangPT" type="button" onclick="setAnalyserLanguage('PT')" style="background: rgba(255,255,255,0.1); color: #fff; border: 1px solid #555; border-radius: 3px; font-weight: bold; font-size: 10px; padding: 1px 5px; cursor: pointer;">PT</button>
 							</div>
 						</div>
-						<label title="Draws a field of view cone representing the player's screen. If an enemy is inside this cone, they are considered visible."><input type="checkbox" checked="" id="options_DrawVisionCone" onclick="checkboxClicked(this)"> Vision Cone</label><br>
-						<label title="Deforms and casts the vision cone dynamically against building walls and terrain elevations in real-time."><input type="checkbox" checked="" id="options_VisionConeRespectsLOS" onclick="checkboxClicked(this)"> Cone with LOS</label><br>
-						<label title="Draws a main blue gaze laser in the player's view direction. The laser turns red whenever the player is aiming at an enemy that is blocked by terrain or buildings. Also draws orange threat lasers to enemies that are visible inside the vision cone. Disabling this option also hides the gaze laser."><input type="checkbox" checked="" id="options_DrawThreatLasers" onclick="checkboxClicked(this)"> Threat Lasers</label><br>
-						<label title="Makes the vision cone, gaze laser, and threat lasers respect terrain and building line-of-sight."><input type="checkbox" checked="" id="options_ConeRespectsTerrain" onclick="checkboxClicked(this)"> Terrain/Building LOS</label><br>
+						<label title="Draws a field of view cone representing the player's screen. If an enemy is inside this cone, they are considered visible."><input type="checkbox" id="options_DrawVisionCone" onclick="checkboxClicked(this)"> Vision Cone</label><br>
+						<label title="Deforms and casts the vision cone dynamically against building walls and terrain elevations in real-time."><input type="checkbox" id="options_VisionConeRespectsLOS" onclick="checkboxClicked(this)"> Cone with LOS</label><br>
+						<label title="Draws a main blue gaze laser in the player's view direction. The laser turns red whenever the player is aiming at an enemy that is blocked by terrain or buildings. Also draws orange threat lasers to enemies that are visible inside the vision cone. Disabling this option also hides the gaze laser."><input type="checkbox" id="options_DrawThreatLasers" onclick="checkboxClicked(this)"> Threat Lasers</label><br>
+						<label title="Makes the vision cone, gaze laser, and threat lasers respect terrain and building line-of-sight."><input type="checkbox" id="options_ConeRespectsTerrain" onclick="checkboxClicked(this)"> Terrain/Building LOS</label><br>
 						<label title="Alerts when a kill occurs without direct Line-of-Sight (outside vision cone or blocked by building wall/terrain)."><input type="checkbox" id="options_DetectNoLOSKills" onclick="checkboxClicked(this)"> No-LOS Kill Alert</label><br>
 						<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 2px;">
-							<label title="Extends the gaze laser beyond the map's view range/fog distance to analyze aiming focus toward targets out of visual rendering range."><input type="checkbox" checked="" id="options_DrawBVRLaser" onclick="checkboxClicked(this)"> BVR Laser</label>
+							<label title="Extends the gaze laser beyond the map's view range/fog distance to analyze aiming focus toward targets out of visual rendering range."><input type="checkbox" id="options_DrawBVRLaser" onclick="checkboxClicked(this)"> BVR Laser</label>
 							<button type="button" id="btnBVRFocusAlerts" onclick="openBVRFocusModal()" style="background: rgba(0, 229, 255, 0.15); color: #00e5ff; border: 1px solid #00e5ff; border-radius: 3px; font-weight: bold; font-size: 10px; padding: 2px 7px; cursor: pointer; transition: all 0.2s ease;" title="Ver escalafón de tiempos de enfoque de todos los jugadores">BVR Timer List</button>
 						</div>
-						<label title="Tracks enemy FOBs, players, and vehicles marked by squad leader orders within time and distance thresholds and displays a red Spotted ring."><input type="checkbox" checked="" id="options_DrawSpottedIndicators" onclick="checkboxClicked(this)"> Orders & Spotted Tracking</label><br>
+						<label title="Tracks enemy FOBs, players, and vehicles marked by squad leader orders within time and distance thresholds and displays a red Spotted ring."><input type="checkbox" id="options_DrawSpottedIndicators" onclick="checkboxClicked(this)"> Orders & Spotted Tracking</label><br>
 						<label title="Creates a 150m radius zone around the selected player and shows a timer in seconds above nearby enemies to measure response time to threats."><input type="checkbox" id="options_DrawFlankChronometer" onclick="checkboxClicked(this)"> Engagement Timer</label><br>
 						<label title="Displays a timeline track of engagements and events for the selected player at the bottom of the screen."><input type="checkbox" id="options_DrawTimeline" onclick="checkboxClicked(this)"> Timeline</label><br>
 						<label title="Shows footstep sound radii based on player speed (12m crouch, 20m walk, 35m sprint) and vehicle engine sound states (idle, moving, ignition)."><input type="checkbox" id="options_DrawMovementSoundAuras" onclick="checkboxClicked(this)"> Movement Sound Radii</label><br>
@@ -422,9 +422,9 @@
 							<button type="button" id="btnResetConeRange" onclick="resetConeRangeToMapDefault()" style="background: rgba(255,255,255,0.1); color: #ccc; border: 1px solid #555; border-radius: 3px; font-size: 10px; padding: 2px 6px; cursor: pointer; white-space: nowrap;" title="Reset Cone Range to map's real view range">Default</button>
 						</div>
 						<b id="lblAnalyserToolsHeader">Analyser Tools & Debug</b><br>
-						<label title="Shows real-time calculated movement speed (km/h) and stance/acoustic state for the selected player or vehicle."><input type="checkbox" id="options_ShowSelectionSpeed" checked onclick="checkboxClicked(this)"> Selected Entity Speed & Acoustic State</label><br>
+						<label title="Shows real-time calculated movement speed (km/h) and stance/acoustic state for the selected player or vehicle."><input type="checkbox" id="options_ShowSelectionSpeed" onclick="checkboxClicked(this)"> Selected Entity Speed & Acoustic State</label><br>
 						<label title="Smoothly follows the selected player with the camera. Press 'T' to toggle. Free on deselect, smooth transition when switching targets."><input type="checkbox" id="options_CameraTracking" onclick="checkboxClicked(this)"> Camera Tracking (Follow [T])</label><br>
-						<label title="Shows real 2D vector footprints of static objects (buildings, walls, structures) extracted from the game's 3D collision meshes."><input type="checkbox" id="options_DrawBuildingWireframes" checked onclick="checkboxClicked(this); buildingHeightmap.toggleObbEditorPanel();"> Building Footprints</label><br>
+						<label title="Shows real 2D vector footprints of static objects (buildings, walls, structures) extracted from the game's 3D collision meshes."><input type="checkbox" id="options_DrawBuildingWireframes" onclick="checkboxClicked(this); buildingHeightmap.toggleObbEditorPanel();"> Building Footprints</label><br>
 
 						<label title="Superimposes a colorized heightmap terrain grid over the map to verify elevation."><input type="checkbox" id="options_DrawHeightmapOverlay" onclick="checkboxClicked(this)"> Heightmap Overlay</label><br>
 						<label title="Projects an independent 4km (4000m) Raycast laser from the selected player that detects and stops at exact 2D building walls and terrain heightmap elevations."><input type="checkbox" id="options_Draw4KmLaser" onclick="checkboxClicked(this)"> 4km Independent LOS Laser</label><br>

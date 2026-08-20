@@ -336,14 +336,18 @@ function getTimeString(time)
 
 function checkboxClicked(Checkbox)
 {
-	changeSetting(Checkbox.id, Checkbox.checked)
+	changeSetting(Checkbox.id, Checkbox.checked);
 }
 
 // Called when an options checkbox is clicked.
 function changeSetting(settingName, val)
 {
-	window[settingName] = val
-	localStorage[settingName] = JSON.stringify(window[settingName])
+	window[settingName] = val;
+	if (settingName !== "options_DrawBuildingWireframes") {
+		localStorage[settingName] = JSON.stringify(window[settingName]);
+	} else {
+		delete localStorage["options_DrawBuildingWireframes"];
+	}
 
 	requestUpdate();
 }

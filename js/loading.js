@@ -63,7 +63,10 @@ $(()=>
 	$("#playBar")[0].addEventListener("mouseleave", hidePlayBarBubble);
 	$("#playBar")[0].addEventListener('mousemove',  setPlayBarBubble)
 	
-	
+	try {
+		loadSettings();
+	} catch (e) {}
+
 	loadIconsAndDictionaries()
 	
 	//$(document).tooltip() TODO
@@ -829,6 +832,8 @@ function colorImage(white)
 // Load settings from local storage
 function loadSettings()
 {
+	delete localStorage["options_DrawBuildingWireframes"];
+
 	$("input[id^='options_']").each(function() {
 		const id = this.id;
 		if (this.type === "checkbox") {
@@ -840,7 +845,7 @@ function loadSettings()
 
 	// Override with localStorage if previously saved by the user
 	for (var Name in localStorage) 
-		if (Name.startsWith("options_"))
+		if (Name.startsWith("options_") && Name !== "options_DrawBuildingWireframes")
 		{
 			try {
 				const val = JSON.parse(localStorage[Name]);
@@ -855,4 +860,8 @@ function loadSettings()
 				}
 			} catch (e) {}
 		}
+
+	window.options_DrawBuildingWireframes = false;
+	const wireframeElem = document.getElementById("options_DrawBuildingWireframes");
+	if (wireframeElem) wireframeElem.checked = false;
 }
