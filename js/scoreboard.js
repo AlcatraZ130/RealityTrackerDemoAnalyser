@@ -64,6 +64,7 @@ function playerRow_Update(id)
 		row.classList.remove("player-row-squadlead")
 
 	row.cells[0].textContent = p.name;
+	if (p.hash) row.title = "Hash: " + p.hash;
 
 	row.cells[1].textContent = p.kills + "/" + p.deaths
 

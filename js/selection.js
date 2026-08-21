@@ -7,7 +7,9 @@ $(() => $("#selection").dialog(
 	close: selection_DeselectCurrent,
 	containment: "#mainContainer",
 	autoOpen: false,
-	width: 310,
+	width: "auto",
+	minWidth: 260,
+	maxWidth: 480,
 	height: "auto",
 	resizable: false,
 	title: "Selection",
@@ -204,6 +206,34 @@ function selection_DeselectCurrent()
 	selection_SelectPlayer(SELECTED_NOTHING);
 }
 
+function copyPlayerHash(e, hashStr)
+{
+	if (e) e.stopPropagation();
+	if (!hashStr) return;
+
+	if (navigator.clipboard && navigator.clipboard.writeText) {
+		navigator.clipboard.writeText(hashStr).catch(() => {});
+	} else {
+		try {
+			const ta = document.createElement("textarea");
+			ta.value = hashStr;
+			document.body.appendChild(ta);
+			ta.select();
+			document.execCommand("copy");
+			document.body.removeChild(ta);
+		} catch (err) {}
+	}
+
+	const target = e ? (e.currentTarget || e.target) : null;
+	if (target) {
+		const range = document.createRange();
+		range.selectNodeContents(target);
+		const sel = window.getSelection();
+		sel.removeAllRanges();
+		sel.addRange(range);
+	}
+}
+
 // Rewrites the information box
 function selection_UpdateInformationBox()
 {
@@ -266,6 +296,8 @@ function selection_UpdateInformationBox()
 		div.innerHTML += "<br>Height: " + p.Y	
 		if (p.health > 0) 
 			div.innerHTML += "<br>Health: " + p.health
+		if (p.hash)
+			div.innerHTML += `<br>Hash: <span id="playerSelectionHashVal" onclick="copyPlayerHash(event, '${escapeHtml(p.hash)}')" style="cursor: copy; user-select: all;" title="Click to copy hash">${escapeHtml(p.hash)}</span>`
 
 		const spdDiv = document.createElement("div");
 		spdDiv.id = "selection_SpeedAcousticContainer";
