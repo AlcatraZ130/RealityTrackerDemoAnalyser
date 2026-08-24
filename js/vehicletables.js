@@ -92,24 +92,39 @@ function vehicleTable_Update(i)
 // Add a row for a player.
 function vehicleTable_AddPlayer(table, vehicle, player, rownum)
 {
-	var row = table.insertRow(rownum)
+	var row = table.insertRow(rownum);
 
-	var seatName = player.vehicleSeatName
+	var seatName = player.vehicleSeatName || "";
 	// See if we can remove vehiclename from seat name
 	if (seatName.startsWith(vehicle.name))
 	{
-		seatName = seatName.substring(vehicle.name.length)
+		seatName = seatName.substring(vehicle.name.length);
 		if (seatName.startsWith("_"))
-			seatName = seatName.substring(1)
+			seatName = seatName.substring(1);
 		else if (seatName.length == "")
-			seatName = "Driver"
+			seatName = "Driver";
 	}
 
 	// Capitalize first letter because not all seatnames are starting with caps
-	seatName = seatName.charAt(0).toUpperCase() + seatName.substring(1);
+	if (seatName.length > 0) {
+		seatName = seatName.charAt(0).toUpperCase() + seatName.substring(1);
+	} else {
+		seatName = "Passenger";
+	}
 	
-	row.insertCell(0).innerHTML = escapeHtml(seatName)
-	row.insertCell(1).innerHTML = escapeHtml(player.name)
+	row.insertCell(0).innerHTML = escapeHtml(seatName);
+	const nameCell = row.insertCell(1);
+	nameCell.innerHTML = escapeHtml(player.name);
+
+	// Append player's Kit Image
+	if (player.ns_kitImage) {
+		const imgNode = player.ns_kitImage.cloneNode(false);
+		imgNode.width = 15;
+		imgNode.height = 15;
+		imgNode.style.verticalAlign = "text-bottom";
+		imgNode.style.marginLeft = "5px";
+		nameCell.appendChild(imgNode);
+	}
 }
 
 function vehicleTable_UpdateAll()

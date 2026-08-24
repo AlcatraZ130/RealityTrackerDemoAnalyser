@@ -37,10 +37,15 @@ function selection_SelectObject(obj) {
 	if (obj == null) {
 		if (typeof buildingHeightmap !== "undefined") buildingHeightmap.setSelectedObb(null);
 		selection_SelectPlayer(SELECTED_NOTHING);
+		selection_SelectVehicle(SELECTED_NOTHING);
 	}
 	else if (obj instanceof PlayerObject) {
 		if (typeof buildingHeightmap !== "undefined") buildingHeightmap.setSelectedObb(null);
 		selection_SelectPlayer(obj.id);
+	}
+	else if (obj instanceof VehicleObject) {
+		if (typeof buildingHeightmap !== "undefined") buildingHeightmap.setSelectedObb(null);
+		selection_SelectVehicle(obj.id);
 	}
 	else if (obj instanceof ProjObject && obj.player != null) {
 		if (typeof buildingHeightmap !== "undefined") buildingHeightmap.setSelectedObb(null);
@@ -48,6 +53,7 @@ function selection_SelectObject(obj) {
 	}
 	else if (obj && obj._isBuildingObb) {
 		selection_SelectPlayer(SELECTED_NOTHING);
+		selection_SelectVehicle(SELECTED_NOTHING);
 		if (typeof buildingHeightmap !== "undefined") {
 			buildingHeightmap.setSelectedObb(obj);
 		}
@@ -139,15 +145,33 @@ function selection_onClick()
 	}
 }
 
-// When clicking on a vehicle, for this release just select a passenger
+// Select vehicle directly with outline and info box
 function selection_SelectVehicle(i)
 {
-	const v = AllVehicles[i]
-	
-	if (v.Passengers.size == 0)
-		console.log("Vehicle " + i + " is empty, but was selected")
-	else
-		selection_SelectPlayer(v.Passengers.values().next().value, true)
+	if (i == SELECTED_NOTHING || !(i in AllVehicles)) {
+		if (SelectedVehicle != SELECTED_NOTHING && (SelectedVehicle in vehicleTables)) {
+			vehicleTables[SelectedVehicle].classList.remove("vehicleTable-selected");
+		}
+		SelectedVehicle = SELECTED_NOTHING;
+		selection_UpdateInformationBox();
+		return;
+	}
+
+	if (SelectedPlayer != SELECTED_NOTHING) {
+		selection_SelectPlayer(SELECTED_NOTHING);
+	}
+
+	SelectedVehicle = i;
+	const v = AllVehicles[i];
+
+	if (SelectedVehicle in vehicleTables) {
+		vehicleTable_Update(SelectedVehicle);
+		vehicleTables[SelectedVehicle].classList.add("vehicleTable-selected");
+	}
+
+	selection_UpdateInformationBox();
+	$("#selection").dialog("open");
+	requestUpdate();
 }
 
 
@@ -259,23 +283,35 @@ function selection_UpdateInformationBox()
 	// Vehicle is selected
 	if (SelectedVehicle != SELECTED_NOTHING)
 	{
-		const v = AllVehicles[SelectedVehicle]
-		div.innerHTML = "<b>" + escapeHtml(v.name) + "</b>"
-		
-		if (v.health > 0)
-			div.innerHTML += "<br>Health: " + v.health
+		const v = AllVehicles[SelectedVehicle];
+		if (!v) return;
+
+		if (typeof vehicleTable_Update === "function") {
+			vehicleTable_Update(SelectedVehicle);
+		}
+
+		var node = vehicleTables[SelectedVehicle];
+		if (node != null) {
+			var clone = node.cloneNode(true);
+			clone.className = "vehicleTable";
+			clone.style.display = "";
+			div.appendChild(clone);
+		} else {
+			div.innerHTML = "<b>" + escapeHtml(v.name) + "</b>";
+			if (v.health > 0) div.innerHTML += "<br>Health: " + v.health;
+		}
 
 		const spdDiv = document.createElement("div");
 		spdDiv.id = "selection_SpeedAcousticContainer";
-		spdDiv.style.cssText = "margin-top: 0px;";
+		spdDiv.style.cssText = "margin-top: 4px;";
 		div.appendChild(spdDiv);
 
 		updateSelectionSpeedAcousticLabel();
 
 		if (v.team == 1)
-			div.classList.add("color_Team1")
+			div.classList.add("color_Team1");
 		else	
-			div.classList.add("color_Team2")
+			div.classList.add("color_Team2");
 	}
 	// Player is selected
 	else if (SelectedPlayer != SELECTED_NOTHING)
