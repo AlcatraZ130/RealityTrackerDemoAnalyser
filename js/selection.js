@@ -234,6 +234,20 @@ function copyPlayerHash(e, hashStr)
 	}
 }
 
+// Centralized function to obtain the player's external statistics URL.
+// To enable direct player stats profiles (e.g. LATAMSQUAD), uncomment the block below:
+function getPlayerStatsUrl(p)
+{
+	if (!p) return null;
+
+	// LATAM SQUAD Stats (Direct Profile by Player CD-Key Hash)
+	// if (p.hash) {
+	// 	return `https://stats.latamsquad.org/pr/player?id=${encodeURIComponent(p.hash)}&s=1`;
+	// }
+
+	return null;
+}
+
 // Rewrites the information box
 function selection_UpdateInformationBox()
 {
@@ -287,7 +301,13 @@ function selection_UpdateInformationBox()
 				div.innerHTML += `<b>${sqDisplayName}${slText}</b>`;
 			}
 		} 
-		div.innerHTML += "<br>" + escapeHtml(p.name)
+
+		const statsUrl = getPlayerStatsUrl(p);
+		if (statsUrl) {
+			div.innerHTML += `<br><a href="${statsUrl}" target="_blank" rel="noopener noreferrer" style="color: inherit; text-decoration: none; font-weight: bold;" title="Ver estadísticas del jugador" onclick="event.stopPropagation();">${escapeHtml(p.name)}</a>`;
+		} else {
+			div.innerHTML += "<br><b>" + escapeHtml(p.name) + "</b>";
+		}
 		const imgNode = p.ns_kitImage.cloneNode(false);
 		imgNode.width = 16;imgNode.height = 16;
 		imgNode.style.verticalAlign = "text-bottom";
