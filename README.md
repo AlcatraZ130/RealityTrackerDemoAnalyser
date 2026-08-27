@@ -2,7 +2,7 @@
 
 An advanced tactical replay analyser and telemetry visualization suite for **Project Reality: BF2** demo files (.PRdemo).
 
-Built upon the web replay engine of [RealityTracker](https://github.com/yossizap/realitytracker), this extended version adds deep tactical vision analysis, line-of-sight raycasting, sound shockwave tracking, high-definition 2D footprint mashing, and BVR focus telemetry.
+Built upon the web replay engine of [RealityTracker](https://github.com/yossizap/realitytracker), this extended version adds deep tactical vision analysis, line-of-sight raycasting, sound shockwave tracking, high-definition 2D footprint mashing, BVR focus telemetry, and a fully fledged 3D mode (just press **G**).
 
 ---
 

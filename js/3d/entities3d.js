@@ -195,6 +195,52 @@ class Entities3dRenderer extends Initializable {
         const gl = renderer3d.gl;
         if (!gl || !raw || !raw.data) return null;
 
+        if (raw.data.hull && raw.data.turret) {
+            // Multi-Part Vehicle (Chassis Hull + Rotating Turret)
+            const hullData = raw.data.hull;
+            const turretData = raw.data.turret;
+
+            const hVBuf = gl.createBuffer();
+            gl.bindBuffer(gl.ARRAY_BUFFER, hVBuf);
+            gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(hullData.v), gl.STATIC_DRAW);
+
+            const hIBuf = gl.createBuffer();
+            gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, hIBuf);
+            gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint32Array(hullData.i), gl.STATIC_DRAW);
+
+            const tVBuf = gl.createBuffer();
+            gl.bindBuffer(gl.ARRAY_BUFFER, tVBuf);
+            gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(turretData.v), gl.STATIC_DRAW);
+
+            const tIBuf = gl.createBuffer();
+            gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, tIBuf);
+            gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint32Array(turretData.i), gl.STATIC_DRAW);
+
+            const gpuMesh = {
+                isMultiPart: true,
+                hull: {
+                    vertexBuffer: hVBuf,
+                    indexBuffer: hIBuf,
+                    indexCount: hullData.i.length,
+                    vertexCount: hullData.v.length / 6
+                },
+                turret: {
+                    vertexBuffer: tVBuf,
+                    indexBuffer: tIBuf,
+                    indexCount: turretData.i.length,
+                    vertexCount: turretData.v.length / 6,
+                    pivot: turretData.pivot || [0.0, 1.5, 0.0]
+                },
+                groundOffset: raw.groundOffset,
+                length: raw.length,
+                width: raw.width
+            };
+
+            this.gpuMeshCache[modelKey] = gpuMesh;
+            return gpuMesh;
+        }
+
+        // Standard Single-Mesh Model
         const vBuf = gl.createBuffer();
         gl.bindBuffer(gl.ARRAY_BUFFER, vBuf);
         gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(raw.data.v), gl.STATIC_DRAW);
@@ -204,6 +250,7 @@ class Entities3dRenderer extends Initializable {
         gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint32Array(raw.data.i), gl.STATIC_DRAW);
 
         const gpuMesh = {
+            isMultiPart: false,
             vertexBuffer: vBuf,
             indexBuffer: iBuf,
             indexCount: raw.data.i.length,
@@ -222,28 +269,30 @@ class Entities3dRenderer extends Initializable {
         
         this.pendingFetches.add(modelKey);
         try {
-            const resp = await fetch(`models_3d/${modelKey}.json?v=2.1`);
+            const resp = await fetch(`models_3d/${modelKey}.json?v=11.0_restored_clean_1787822000`);
             if (!resp.ok) {
                 this.failedModels.add(modelKey);
                 this.pendingFetches.delete(modelKey);
                 return;
             }
             const data = await resp.json();
-            if (!data || !data.v || !data.i) {
+            if (!data || (!data.v && !data.hull)) {
                 this.failedModels.add(modelKey);
                 this.pendingFetches.delete(modelKey);
                 return;
             }
 
-            // Calculate precise bounding box and ground offset
+            // Calculate precise bounding box and ground offset across all vertices
             let minY = Infinity, maxY = -Infinity;
             let minX = Infinity, maxX = -Infinity;
             let minZ = Infinity, maxZ = -Infinity;
-            const numVerts = data.v.length / 6;
+
+            const allV = (data.hull && data.turret) ? data.hull.v.concat(data.turret.v) : (data.v || []);
+            const numVerts = allV.length / 6;
             for (let vIdx = 0; vIdx < numVerts; vIdx++) {
-                const vx = data.v[vIdx * 6];
-                const vy = data.v[vIdx * 6 + 1];
-                const vz = data.v[vIdx * 6 + 2];
+                const vx = allV[vIdx * 6];
+                const vy = allV[vIdx * 6 + 1];
+                const vz = allV[vIdx * 6 + 2];
                 if (vy < minY) minY = vy;
                 if (vy > maxY) maxY = vy;
                 if (vx < minX) minX = vx;
@@ -735,6 +784,7 @@ class Entities3dRenderer extends Initializable {
                 if (Math.abs(v._smoothPitch) > 0.001) mat4.rotateX(modelMatrix, modelMatrix, v._smoothPitch);
                 if (Math.abs(v._smoothRoll) > 0.001) mat4.rotateZ(modelMatrix, modelMatrix, v._smoothRoll);
 
+                // Render Vehicle Model
                 this.renderSingleMesh(activeMesh, modelMatrix, viewMatrix, projectionMatrix, teamCol, isSelected);
             }
         }
@@ -980,6 +1030,14 @@ class Entities3dRenderer extends Initializable {
     renderSingleMesh(gpuMesh, modelMatrix, viewMatrix, projectionMatrix, teamColor, isSelected) {
         const gl = renderer3d.gl;
         if (!gl || !gpuMesh) return;
+
+        if (gpuMesh.isMultiPart) {
+            if (gpuMesh.hull) this.renderSingleMesh(gpuMesh.hull, modelMatrix, viewMatrix, projectionMatrix, teamColor, isSelected);
+            if (gpuMesh.turret) this.renderSingleMesh(gpuMesh.turret, modelMatrix, viewMatrix, projectionMatrix, teamColor, isSelected);
+            return;
+        }
+
+        if (!gpuMesh.vertexBuffer || !gpuMesh.indexBuffer) return;
 
         // 1. Main Model Pass (Render solid team color)
         gl.useProgram(this.program);
