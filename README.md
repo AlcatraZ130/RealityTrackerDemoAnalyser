@@ -4,6 +4,8 @@ An advanced tactical replay analyser and telemetry visualization suite for **Pro
 
 Built upon the web replay engine of [RealityTracker](https://github.com/yossizap/realitytracker), this extended version adds deep tactical vision analysis, line-of-sight raycasting, sound shockwave tracking, high-definition 2D footprint mashing, BVR focus telemetry, and a fully fledged 3D mode (just press **G**).
 
+You can try it here: [https://alcatraz130.github.io/RealityTrackerDemoAnalyser/](https://alcatraz130.github.io/RealityTrackerDemoAnalyser/)
+
 ---
 
 ## Credits & License
