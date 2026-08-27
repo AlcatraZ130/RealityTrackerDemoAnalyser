@@ -259,8 +259,8 @@ class Renderer3d extends Initializable {
 
     getCurrentProjectionMatrix() {
         const fieldOfView = this.fov * Math.PI / 180;
-        const zNear = 1.5;
-        const zFar = 3500.0;
+        const zNear = 1.0;
+        const zFar = 20000.0; // 20km view distance prevents terrain horizon clipping
         const projectionMatrix = mat4.create();
         mat4.perspective(projectionMatrix,
             fieldOfView,
@@ -1120,8 +1120,8 @@ class Renderer3d extends Initializable {
 
         gl.uniformMatrix4fv(this.fs_uInvViewProj, false, invViewProj);
         gl.uniform3f(this.fs_uCamPos, this.cameraPos[0], this.cameraPos[1], this.cameraPos[2]);
-        gl.uniform1f(this.fs_uCamNear, 1.5);
-        gl.uniform1f(this.fs_uCamFar, 3500.0);
+        gl.uniform1f(this.fs_uCamNear, 1.0);
+        gl.uniform1f(this.fs_uCamFar, 20000.0);
 
         // Textures: unit 0 = sceneColorTex, unit 1 = sceneDepthTex, unit 2 = visionColorTex (eyeDepthTex)
         gl.activeTexture(gl.TEXTURE0);
