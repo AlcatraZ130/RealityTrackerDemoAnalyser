@@ -15,6 +15,7 @@ class Renderer3d extends Initializable {
 
 
     isTopDown = false;
+    targetTopDownAltitude = null;
     cameraPos = vec4.create();
     cameraYaw = 0;
     cameraPitch = 0;
@@ -28,40 +29,61 @@ class Renderer3d extends Initializable {
 
     
     fov = 90;
+    aspect = 1.0;
+
+    initialized = false;
+    dataReady = true;
 
     constructor() {
         super();
-        this.canvas = $("#map3d")[0];
-        this.mapDiv = $("#renderers")[0];
+        this.canvas = document.querySelector("#map3d");
+        this.mapDiv = document.querySelector("#renderers");
         this.dataReady = true;
-    };
+    }
 
-
+    getIsDataReady() {
+        return true;
+    }
 
     getInitializationList() { return [terrainRenderer, building3dRenderer, geometry2dRenderer, entities3dRenderer, lines3dRenderer, hud3d]; }
     getDependencyList() { return [heightmap]; }
 
     init() {
-        if (this.initialized)
-            return true;
+        if (this.initialized) return true;
 
-        this.gl = this.canvas.getContext("webgl2", {
+        this.canvas = document.querySelector("#map3d");
+        this.mapDiv = document.querySelector("#renderers");
+        if (!this.canvas) return false;
+
+        const gl = this.canvas.getContext("webgl2", {
+            alpha: true,
             depth: true,
+            stencil: false,
             antialias: true,
-            stencil: true,
-            powerPreference: "high-performance"
+            powerPreference: "high-performance",
+            premultipliedAlpha: false
         });
-        if (this.gl === null) {
-            alert("Unable to initialize WebGL.");
+
+        if (gl === null) {
+            alert("Unable to initialize WebGL2. Your browser or machine may not support it.");
             return false;
         }
+
+        this.gl = gl;
+
+        // Enable Depth Testing
+        gl.enable(gl.DEPTH_TEST);
+        gl.depthFunc(gl.LEQUAL);
+
+        // Extensions
+        this.extExtColorBufferFloat = gl.getExtension('EXT_color_buffer_float');
 
         if (!this.runInitList())
             return false;
 
         this._initVisionDepthPass();
-        this._initSceneFbo(this.canvas.width, this.canvas.height);
         this._initFullscreenVolumetricPass();
+        this._initSceneFbo();
 
         this._updateRenderingSize();
         vec4.set(this.cameraPos, 0, 300, 0, 0);
@@ -74,6 +96,7 @@ class Renderer3d extends Initializable {
         this.isTopDown = true;
         this.cameraPitch = -89.9;
         this.cameraYaw = 0;
+        this.targetTopDownAltitude = null;
         if (this.cameraPos[1] < 300.0) {
             this.cameraPos[1] = 600.0;
         }
@@ -180,15 +203,19 @@ class Renderer3d extends Initializable {
     }
 
     _updateRenderingSize() {
-        const w = this.mapDiv.clientWidth;
-        const h = this.mapDiv.clientHeight;
-        if (this.canvas.width !== w || this.canvas.height !== h) {
+        if (!this.mapDiv) this.mapDiv = document.querySelector("#renderers");
+        if (!this.canvas) this.canvas = document.querySelector("#map3d");
+        const w = (this.mapDiv && this.mapDiv.clientWidth) ? this.mapDiv.clientWidth : (window.innerWidth || 800);
+        const h = (this.mapDiv && this.mapDiv.clientHeight) ? this.mapDiv.clientHeight : (window.innerHeight || 600);
+        if (this.canvas && (this.canvas.width !== w || this.canvas.height !== h)) {
             this.canvas.width = w;
             this.canvas.height = h;
             this.aspect = this.canvas.width / this.canvas.height;
             this._resizeSceneFbo(w, h);
         }
-        this.gl.viewport(0, 0, this.canvas.width, this.canvas.height);
+        if (this.gl && this.canvas) {
+            this.gl.viewport(0, 0, this.canvas.width, this.canvas.height);
+        }
     };
 
 
@@ -371,7 +398,53 @@ class Renderer3d extends Initializable {
             }
         }
 
-        if (trackedTargetPos) {
+        if (this.isTopDown) {
+            // Smooth Top-Down Altitude Interpolation
+            if (this.targetTopDownAltitude != null) {
+                const lerpAlt = Math.min(1.0, frameTime * 12.0);
+                this.cameraPos[1] += (this.targetTopDownAltitude - this.cameraPos[1]) * lerpAlt;
+                if (Math.abs(this.targetTopDownAltitude - this.cameraPos[1]) < 0.5) {
+                    this.cameraPos[1] = this.targetTopDownAltitude;
+                    this.targetTopDownAltitude = null;
+                } else if (typeof requestUpdate === "function") {
+                    requestUpdate();
+                }
+                this.clampPosition();
+                renderNeeded = true;
+            }
+
+            if (trackedTargetPos) {
+                // Top-Down Tracking Mode: Smoothly follow entity on ground plane (X, Z),
+                // while altitude (Y) remains freely controllable by the user (50m to 3500m)!
+                const lerpFactor = Math.min(1.0, frameTime * 16.0);
+                this.cameraPos[0] += (trackedTargetPos[0] - this.cameraPos[0]) * lerpFactor;
+                this.cameraPos[2] += (trackedTargetPos[2] - this.cameraPos[2]) * lerpFactor;
+                this.clampPosition();
+                renderNeeded = true;
+            } else {
+                let speed = Math.max(200, this.cameraPos[1] * 0.8);
+                if (keysDown.has(16)) speed *= 3.0; // Shift boost
+
+                if (keysDown.has(87)) { // W (North)
+                    this.cameraPos[2] -= frameTime * speed;
+                    renderNeeded = true;
+                }
+                if (keysDown.has(83)) { // S (South)
+                    this.cameraPos[2] += frameTime * speed;
+                    renderNeeded = true;
+                }
+                if (keysDown.has(65)) { // A (West)
+                    this.cameraPos[0] -= frameTime * speed;
+                    renderNeeded = true;
+                }
+                if (keysDown.has(68)) { // D (East)
+                    this.cameraPos[0] += frameTime * speed;
+                    renderNeeded = true;
+                }
+
+                this.clampPosition();
+            }
+        } else if (trackedTargetPos) {
             let zoomSpeed = 40.0;
             let rotateSpeed = 80.0;
             if (keysDown.has(16)) { // Shift multiplier
@@ -427,28 +500,6 @@ class Renderer3d extends Initializable {
 
             this.clampPosition();
             renderNeeded = true;
-        } else if (this.isTopDown) {
-            let speed = Math.max(200, this.cameraPos[1] * 0.8);
-            if (keysDown.has(16)) speed *= 3.0; // Shift boost
-
-            if (keysDown.has(87)) { // W (North)
-                this.cameraPos[2] -= frameTime * speed;
-                renderNeeded = true;
-            }
-            if (keysDown.has(83)) { // S (South)
-                this.cameraPos[2] += frameTime * speed;
-                renderNeeded = true;
-            }
-            if (keysDown.has(65)) { // A (West)
-                this.cameraPos[0] -= frameTime * speed;
-                renderNeeded = true;
-            }
-            if (keysDown.has(68)) { // D (East)
-                this.cameraPos[0] += frameTime * speed;
-                renderNeeded = true;
-            }
-
-            this.clampPosition();
         } else {
             let speed = this.cameraSpeed || 200;
             if (keysDown.has(16))

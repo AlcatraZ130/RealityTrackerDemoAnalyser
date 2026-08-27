@@ -150,9 +150,11 @@ function Wheel(event)
 	if (typeof is3DMode !== "undefined" && is3DMode && typeof renderer3d !== "undefined") {
 		if (event.preventDefault) event.preventDefault();
 		if (renderer3d.isTopDown) {
-			const zoomFactor = (event.deltaY < 0) ? 0.85 : 1.18;
-			renderer3d.cameraPos[1] = clamp(50.0, renderer3d.cameraPos[1] * zoomFactor, 3500.0);
-			renderer3d.clampPosition();
+			if (renderer3d.targetTopDownAltitude == null) {
+				renderer3d.targetTopDownAltitude = renderer3d.cameraPos[1];
+			}
+			const zoomMultiplier = (event.deltaY < 0) ? 0.80 : 1.25;
+			renderer3d.targetTopDownAltitude = clamp(50.0, renderer3d.targetTopDownAltitude * zoomMultiplier, 3500.0);
 			requestUpdate();
 			return;
 		}
