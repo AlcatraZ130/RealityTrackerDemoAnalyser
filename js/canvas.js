@@ -882,6 +882,7 @@ function drawCache(i)
 function drawProj(i)
 {
 	const proj = AllProj[i]
+	if (!proj) return
 	
 	// Projectiles take a while to delete after hitting. Ignore fast projectiles when they stop moving
 	if (proj.ns_isFast && Math.abs(proj.ns_lastX - proj.X) < 10 
@@ -892,56 +893,52 @@ function drawProj(i)
 	const x = proj.getCanvasX()
 	const y = proj.getCanvasY()
 	
-	
-	var color = proj.team - 1
+	// Safe color index [0: Red/OpFor, 1: Blue/BluFor, 2: Squad Green, 3: Selected White]
+	var color = 0
 	if (proj.player != null)
 	{
 		const p = proj.player
-		if (SelectedPlayer == p.id)
+		if (typeof SelectedPlayer !== "undefined" && SelectedPlayer == p.id)
 		{
 			color = 3
 		}
-		else if (p.team == SelectedSquadTeam && p.squad == SelectedSquadNumber)
+		else if (typeof SelectedSquadTeam !== "undefined" && typeof SelectedSquadNumber !== "undefined" &&
+				 p.team == SelectedSquadTeam && p.squad == SelectedSquadNumber)
 		{
 			color = 2
 		}
+		else
+		{
+			color = (p.team === 2) ? 1 : 0
+		}
 	}
+	else
+	{
+		color = (proj.team === 2) ? 1 : 0
+	}
+	color = Math.max(0, Math.min(3, color))
 	
-	
-	if (proj.ns_icon != null) 
+	if (proj.ns_icon != null && proj.ns_icon[color] != null) 
 	{
 		Context.save()
-		
 		Context.translate(x, y)
 		if (proj.ns_shouldRotate)
 			Context.rotate(proj.rotation / 180 * Math.PI)
 		Context.drawImage(proj.ns_icon[color], -8, -8) 
-		
 		Context.restore()
 	}
 	else 
 	{
-		// TODO placeholder
-		const style = [Style_RedTeam, Style_BlueTeam, Style_SquadSelection, "white"][color]
-		
+		const style = [Style_RedTeam, Style_BlueTeam, Style_SquadSelection, "white"][color] || "white"
 		Context.save()
-		
 		Context.lineWidth = 2;
 		Context.strokeStyle = style
-
-		
 		Context.beginPath()
 		Context.moveTo(x-4, y-4)
 		Context.lineTo(x+4, y+4)
-		Context.stroke()
-		Context.fill()
-		
-		Context.beginPath()
 		Context.moveTo(x+4, y-4)
 		Context.lineTo(x-4, y+4)
 		Context.stroke()
-		Context.fill()
-		
 		Context.restore()
 	}
 }

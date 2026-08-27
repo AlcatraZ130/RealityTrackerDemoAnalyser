@@ -639,6 +639,13 @@ function stage4LoadingFininshed()
 	// Chrome hack: draw again a second later, its doing some async caching and images are not ready
 	setTimeout(requestUpdate, 300);
 
+	// Start non-blocking progressive background model streaming after 2D playback is established
+	setTimeout(() => {
+		if (typeof entities3dRenderer !== "undefined" && typeof entities3dRenderer.startProgressiveBackgroundPreload === "function") {
+			entities3dRenderer.startProgressiveBackgroundPreload();
+		}
+	}, 1200);
+
 	loadingComplete = true;
 }
 
@@ -769,8 +776,10 @@ function createMapImageWithCombatArea()
 		context.fill()
 	})
 	
-	MapImageWithCombatArea = new Image()
-	MapImageWithCombatArea.src = c.toDataURL()
+	MapImageWithCombatArea = c;
+	if (typeof terrainRenderer !== "undefined" && terrainRenderer.initialized) {
+		terrainRenderer.updateMapTexture(MapImageWithCombatArea);
+	}
 	
 	CameraX=CameraXTemp
 	CameraY=CameraYTemp

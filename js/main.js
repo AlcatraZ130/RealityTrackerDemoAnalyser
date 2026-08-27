@@ -150,6 +150,9 @@ function updateLogic(frameTime)
 	if (typeof playerRow_UpdateAll === "function") {
 		playerRow_UpdateAll();
 	}
+	if (typeof analyserTimeline !== "undefined") {
+		analyserTimeline.draw();
+	}
 }
 
 
@@ -234,7 +237,7 @@ function onKeyDown(e)
 		case 67: //c
 			toggleSubMenu("vehicles")
 			break
-		case 84: //t
+		case 84: // t
 			if (typeof toggleCameraTracking === "function") {
 				toggleCameraTracking();
 			} else {
@@ -343,10 +346,8 @@ function checkboxClicked(Checkbox)
 function changeSetting(settingName, val)
 {
 	window[settingName] = val;
-	if (settingName !== "options_DrawBuildingWireframes") {
-		localStorage[settingName] = JSON.stringify(window[settingName]);
-	} else {
-		delete localStorage["options_DrawBuildingWireframes"];
+	if (settingName === "options_DrawDOD" && typeof terrainRenderer !== "undefined" && terrainRenderer.initialized) {
+		terrainRenderer.updateMapTexture();
 	}
 
 	requestUpdate();
@@ -375,30 +376,69 @@ function hidePlayBarBubble()
 	playBarBubble.style.display = "none"
 }
 
+const VIEWPORT_2D = 0;
+const VIEWPORT_3D_FREE = 1;
+const VIEWPORT_3D_TOPDOWN = 2;
+var viewportMode = VIEWPORT_2D;
 var is3DMode = false;
 var activeRenderer;
+
+function showViewportModeToast(msg) {
+	let toast = document.getElementById("viewportModeToast");
+	if (!toast) {
+		toast = document.createElement("div");
+		toast.id = "viewportModeToast";
+		toast.style.cssText = "position: absolute; top: 50px; left: 50%; transform: translateX(-50%); background: rgba(10, 20, 25, 0.90); color: #00e5ff; border: 1px solid #00e5ff; border-radius: 4px; padding: 6px 16px; font-weight: bold; font-size: 13px; z-index: 1000; pointer-events: none; transition: opacity 0.4s ease; box-shadow: 0 0 12px rgba(0,229,255,0.4); text-shadow: 0 0 4px rgba(0,229,255,0.6);";
+		document.body.appendChild(toast);
+	}
+	toast.textContent = msg;
+	toast.style.opacity = "1";
+	if (window._toastTimer) clearTimeout(window._toastTimer);
+	window._toastTimer = setTimeout(() => {
+		if (toast) toast.style.opacity = "0";
+	}, 1600);
+}
+
 function toggle3dMode() {
-	if (is3DMode) {
-		is3DMode = false;
+	const hudCanvas = document.getElementById("map3dHud");
+	
+	// Cycle: 0 (2D Canvas) -> 1 (3D Free Camera) -> 2 (3D Top-Down) -> 0 (2D Canvas)
+	viewportMode = (viewportMode + 1) % 3;
+	is3DMode = (viewportMode !== VIEWPORT_2D);
+
+	if (viewportMode === VIEWPORT_2D) {
 		activeRenderer = renderer2d;
 		$("#map")[0].style.display = "block";
 		$("#map3d")[0].style.display = "none";
-	} else {
-		if (!renderer3d.initalized) {
+		if (hudCanvas) hudCanvas.style.display = "none";
+		requestUpdate();
+	} else if (viewportMode === VIEWPORT_3D_FREE) {
+		if (!renderer3d.initialized) {
 			if (!renderer3d.init()) {
-				console.log("3d not ready yet");
+				console.log("3D WebGL initialization failed");
 				return;
-            }
-        }
-			
-
-		is3DMode = true;
+			}
+		}
 		activeRenderer = renderer3d;
+		renderer3d.isTopDown = false;
 		$("#map")[0].style.display = "none";
 		$("#map3d")[0].style.display = "block";
+		if (hudCanvas) hudCanvas.style.display = "block";
 		renderer3d.draw();
-    }
-
+	} else if (viewportMode === VIEWPORT_3D_TOPDOWN) {
+		if (!renderer3d.initialized) {
+			if (!renderer3d.init()) {
+				console.log("3D WebGL initialization failed");
+				return;
+			}
+		}
+		activeRenderer = renderer3d;
+		renderer3d.setTopDownView();
+		$("#map")[0].style.display = "none";
+		$("#map3d")[0].style.display = "block";
+		if (hudCanvas) hudCanvas.style.display = "block";
+		renderer3d.draw();
+	}
 }
 
 $(() => activeRenderer = renderer2d);

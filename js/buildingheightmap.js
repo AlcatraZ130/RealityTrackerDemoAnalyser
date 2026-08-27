@@ -102,9 +102,21 @@ class BuildingHeightmap {
             if (lc.includes(EXCLUDE_NAMES[i].toLowerCase())) return null;
         }
 
-        // Tree / Palm / Bush Vegetation Objects
-        if (lc.includes("tree") || lc.includes("palm") || lc.includes("bush") || lc.includes("shrub") || lc.includes("birch") || lc.includes("pine") || lc.includes("oak") || lc.includes("jungle") || lc.includes("foliage") || lc.includes("almond") || lc.includes("hedge")) {
+        // Tree / Palm / Bush / Fir Conifer Vegetation Objects
+        if (lc.includes("fir_tall") || lc.includes("pine_tall") || lc.includes("tree_tall")) {
+            return { h: 18, w: 6, l: 6, isVegetation: true };
+        }
+        if (lc.includes("fir_medium") || lc.includes("fir_mixed") || lc.includes("pine_medium") || lc.includes("tree_medium")) {
+            return { h: 12, w: 5, l: 5, isVegetation: true };
+        }
+        if (lc.includes("fir_small") || lc.includes("pine_small") || lc.includes("tree_small")) {
             return { h: 6, w: 4, l: 4, isVegetation: true };
+        }
+        if (lc.includes("tree") || lc.includes("palm") || lc.includes("bush") || lc.includes("shrub") || 
+            lc.includes("birch") || lc.includes("pine") || lc.includes("fir") || lc.includes("spruce") ||
+            lc.includes("cedar") || lc.includes("oak") || lc.includes("jungle") || lc.includes("foliage") || 
+            lc.includes("almond") || lc.includes("hedge") || lc.includes("nc_deadlog")) {
+            return { h: 10, w: 5, l: 5, isVegetation: true };
         }
 
         for (let i = 0; i < PROFILES.length; i++) {
@@ -233,8 +245,28 @@ class BuildingHeightmap {
 
     // Load
 
+    _normalizeMapKey(mapKey) {
+        if (!mapKey) return "";
+        let k = mapKey.toLowerCase().replace(/[\s\-]+/g, "_");
+        if (typeof window !== "undefined" && window.MAP_STATICS_DB && window.MAP_STATICS_DB[k]) return k;
+        
+        const aliases = {
+            "albasrah": "albasrah_2",
+            "al_basrah": "albasrah_2",
+            "gaza": "gaza_2",
+            "muttrah": "muttrah_city_2",
+            "muttrah_city": "muttrah_city_2",
+            "ras_el_masri": "ras_el_masri_2",
+            "raselmasri": "ras_el_masri_2"
+        };
+        if (aliases[k]) return aliases[k];
+        if (typeof window !== "undefined" && window.MAP_STATICS_DB && window.MAP_STATICS_DB[k + "_2"]) return k + "_2";
+        return k;
+    }
+
     async load(mapKey, heightmapConfig) {
         if (!mapKey || this._loading) return;
+        mapKey = this._normalizeMapKey(mapKey);
         this._loading = true;
         this._mapKey  = mapKey;
 
@@ -380,14 +412,16 @@ class BuildingHeightmap {
     // Grid initializer
 
     _initGrid(config) {
-        let terrainSize = 1024;
-        let scaleX = 2;
+        let terrainM = 2048;
         if (config) {
-            if (config.fullsize) terrainSize = parseInt(config.fullsize);
-            if (config.scale && typeof config.scale === "string") scaleX = parseFloat(config.scale.split("/")[0]) || 2;
-            else if (typeof config.scale === "number") scaleX = config.scale;
+            if (config.fullsize) {
+                terrainM = parseInt(config.fullsize);
+            } else if (config.size && config.scale) {
+                const s = parseInt(config.size.split(" ")[0]) || 1024;
+                const sc = parseFloat(config.scale.split("/")[0]) || 2;
+                terrainM = s * sc;
+            }
         }
-        const terrainM    = terrainSize * scaleX;
         const cellSize    = 2;
         const gridSize    = Math.ceil(terrainM / cellSize);
         const origin      = -terrainM / 2;
@@ -565,11 +599,40 @@ class BuildingHeightmap {
             const col1 = Math.min(gridSize - 1, Math.floor((obb.x + maxR - origin) / cellSize));
             const row0 = Math.max(0, Math.floor((obb.z - maxR - origin) / cellSize));
             const row1 = Math.min(gridSize - 1, Math.floor((obb.z + maxR - origin) / cellSize));
-            for (let r = row0; r <= row1; r++)
+
+            const rad = -(obb.yaw || 0) * Math.PI / 180;
+            const cosR = Math.cos(rad), sinR = Math.sin(rad);
+            const sx = obb.scaleX || 1.0, sz = obb.scaleZ || 1.0;
+            const rawFp = obb.customPolygon || this._getFootprint(obb.name);
+            const poly = (rawFp && rawFp.poly) ? rawFp.poly : rawFp;
+            const hasPoly = (poly && poly.length >= 3);
+            const hw = (obb.width || 6) / 2;
+            const hl = (obb.length || 6) / 2;
+
+            for (let r = row0; r <= row1; r++) {
+                const wz = origin + (r + 0.5) * cellSize;
+                const dz = wz - obb.z;
                 for (let c = col0; c <= col1; c++) {
-                    const idx = r * gridSize + c;
-                    if (obb.maxY > this.grid[idx]) this.grid[idx] = obb.maxY;
+                    const wx = origin + (c + 0.5) * cellSize;
+                    const dx = wx - obb.x;
+
+                    // Convert to local model space (matching BF2 -pz footprint orientation)
+                    const lx = (dx * cosR + dz * sinR) / sx;
+                    const lz = (dx * sinR - dz * cosR) / sz;
+
+                    let inside = false;
+                    if (hasPoly) {
+                        inside = this.pointInPolygon(lx, lz, poly);
+                    } else {
+                        inside = (Math.abs(lx) <= hw && Math.abs(lz) <= hl);
+                    }
+
+                    if (inside) {
+                        const idx = r * gridSize + c;
+                        if (obb.maxY > this.grid[idx]) this.grid[idx] = obb.maxY;
+                    }
                 }
+            }
         }
         const sCell = this.spatialCellSize;
         const maxR  = Math.hypot(obb.halfW, obb.halfL);
@@ -637,9 +700,9 @@ class BuildingHeightmap {
         let inside = false;
         for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
             const xi = poly[i].x !== undefined ? poly[i].x : poly[i][0];
-            const yi = poly[i].y !== undefined ? poly[i].y : poly[i][1];
+            const yi = poly[i].z !== undefined ? poly[i].z : (poly[i].y !== undefined ? poly[i].y : poly[i][1]);
             const xj = poly[j].x !== undefined ? poly[j].x : poly[j][0];
-            const yj = poly[j].y !== undefined ? poly[j].y : poly[j][1];
+            const yj = poly[j].z !== undefined ? poly[j].z : (poly[j].y !== undefined ? poly[j].y : poly[j][1]);
             const intersect = ((yi > py) !== (yj > py)) && (px < (xj - xi) * (py - yi) / (yj - yi) + xi);
             if (intersect) inside = !inside;
         }

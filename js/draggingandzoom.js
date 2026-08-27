@@ -8,7 +8,9 @@ $(function ()
 	// <!--  MouseDown, wheel, click are only relevant on the canvas -->
 	mapdiv.addEventListener("mousedown", MouseDown, false)
 	mapdiv.addEventListener("click", MouseClick, false)
-	mapdiv.addEventListener("wheel", Wheel, false)
+	mapdiv.addEventListener("wheel", Wheel, { passive: false })
+	const map3dCanvas = document.getElementById("map3d");
+	if (map3dCanvas) map3dCanvas.addEventListener("wheel", Wheel, { passive: false });
 	// <!-- Mouse Up/move is always important to catch everywhere so we can keep dragging when the mouse leaves the canvas -->
 	document.addEventListener("mouseup", function (event)
 	{
@@ -100,23 +102,19 @@ function MouseClick(event)
 
 	var pos = activeRenderer.getMousePos(event)
 
-	// <!-- if mouse was dragged, do not deselect or select. -->
-	if (Math.pow(MouseDownPosX - pos.X, 2) + Math.pow(MouseDownPosY - pos.Y, 2) > 45)
-		return
+	// If mouse was dragged significantly, do not process click
+	const dragDistSq = Math.pow(MouseDownPosX - pos.X, 2) + Math.pow(MouseDownPosY - pos.Y, 2);
+	if (dragDistSq > 150)
+		return;
 
 	const objectToSelect = activeRenderer.mouseClick(pos);
 
-	// Didn't click on anything, deselect
-	if (objectToSelect == null) {
-		selection_SelectPlayer(SELECTED_NOTHING)
-	}
-
 	if (doubleClickTimer == null) {
-		doubleclick_StartTimer()
-		handleSingleClick(objectToSelect)
+		doubleclick_StartTimer();
+		handleSingleClick(objectToSelect);
 	} else {
-		doubleclick_Clear()
-		handleDoubleClick(objectToSelect)
+		doubleclick_Clear();
+		handleDoubleClick(objectToSelect);
 	}
 
 	requestUpdate();
@@ -149,12 +147,53 @@ function doubleclick_Clear()
 
 function Wheel(event)
 {
+	if (typeof is3DMode !== "undefined" && is3DMode && typeof renderer3d !== "undefined") {
+		if (event.preventDefault) event.preventDefault();
+		if (renderer3d.isTopDown) {
+			const zoomFactor = (event.deltaY < 0) ? 0.85 : 1.18;
+			renderer3d.cameraPos[1] = clamp(50.0, renderer3d.cameraPos[1] * zoomFactor, 3500.0);
+			renderer3d.clampPosition();
+			requestUpdate();
+			return;
+		}
+
+		const isTracking = (typeof options_CameraTracking !== "undefined" && options_CameraTracking &&
+			((typeof SelectedPlayer !== "undefined" && SelectedPlayer !== SELECTED_NOTHING) ||
+			 (typeof SelectedVehicle !== "undefined" && SelectedVehicle !== SELECTED_NOTHING)));
+		if (isTracking) {
+			const delta = (event.deltaY < 0) ? -2.5 : 2.5;
+			renderer3d.adjustOrbitDistance(delta);
+			requestUpdate();
+			return;
+		}
+
+		// In Free 3D mode: Mouse wheel smoothly adjusts camera flight speed
+		if (renderer3d.cameraSpeed == null || isNaN(renderer3d.cameraSpeed)) renderer3d.cameraSpeed = 200;
+		if (event.deltaY < 0) {
+			renderer3d.cameraSpeed = Math.min(3000, Math.round(renderer3d.cameraSpeed * 1.35 + 20));
+		} else {
+			renderer3d.cameraSpeed = Math.max(15, Math.round(renderer3d.cameraSpeed * 0.70 - 10));
+		}
+		
+		// Visual HUD speed notification
+		if (typeof hud3d !== "undefined") {
+			hud3d.showSpeedNotification = {
+				speed: renderer3d.cameraSpeed,
+				time: performance.now()
+			};
+		}
+
+		requestUpdate();
+		return;
+	}
+
 	if (MouseIsDown || event.ctrlKey)
 		return;
 
 	let pivotPos = activeRenderer.getMousePos(event);
-	if (typeof options_CameraTracking !== "undefined" && options_CameraTracking && typeof SelectedPlayer !== "undefined" && SelectedPlayer !== SELECTED_NOTHING) {
-		pivotPos = { X: Canvas.width / 2, Y: Canvas.height / 2 };
+	const scale = (typeof options_canvasScale !== "undefined" && options_canvasScale > 0) ? options_canvasScale : 1.0;
+	if (typeof options_CameraTracking !== "undefined" && options_CameraTracking && ((typeof SelectedPlayer !== "undefined" && SelectedPlayer !== SELECTED_NOTHING) || (typeof SelectedVehicle !== "undefined" && SelectedVehicle !== SELECTED_NOTHING))) {
+		pivotPos = { X: (Canvas.width / 2) / scale, Y: (Canvas.height / 2) / scale };
 	}
 
 	if (event.deltaY < 0)

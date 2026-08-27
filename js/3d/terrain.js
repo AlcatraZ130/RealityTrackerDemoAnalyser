@@ -105,26 +105,47 @@ class TerrainRenderer extends Initializable {
     }
 
     // Create coords for the vertices of the heightmap 
-    // Cut heightmap into 129x129 segments.
     _createSegments() {
-        const segmentCount = Math.floor(heightmap.size / 128);
-        for (let i = 0; i < segmentCount; i++) {
-            const l = []
-            this.segments.push(l);
-            for (let j = 0; j < segmentCount; j++) {
-                l.push(new TerrainSegment(i * 128, j * 128));
+        if (this.segments && this.segments.length > 0) {
+            const gl = renderer3d.gl;
+            if (gl) {
+                for (const row of this.segments) {
+                    for (const seg of row) {
+                        if (seg.gpu_vertexBuffer) {
+                            for (const buf of seg.gpu_vertexBuffer) gl.deleteBuffer(buf);
+                        }
+                    }
+                }
             }
         }
-        console.log("TERRAIN: initialized heightmap segments: " + segmentCount + "x" + segmentCount);
-            
-    };
+        this.segments = [];
+
+        // Adaptive segment count capped to 8x8 max (64 segments total)
+        // Eliminates out-of-memory crashes on large 4km maps like Grozny!
+        const segmentCount = Math.min(8, Math.max(4, Math.floor(heightmap.size / 128)));
+        const span = heightmap.size / segmentCount;
+        const lodScale = span / 128.0;
+
+        for (let i = 0; i < segmentCount; i++) {
+            const row = [];
+            this.segments.push(row);
+            const xstart = i * span;
+            for (let j = 0; j < segmentCount; j++) {
+                const zstart = j * span;
+                row.push(new TerrainSegment(xstart, zstart, span, lodScale, 129));
+            }
+        }
+        console.log("TERRAIN: initialized heightmap segments: " + segmentCount + "x" + segmentCount + " (Span: " + span + ", LodScale: " + lodScale + ")");
+    }
 
     _loadMapImageAsTexture() {
         if (MapImage == null) {
             console.error("TERRAIN: Called load texture for map when map isn't ready");
             return;
         }
+        const img = (typeof options_DrawDOD !== "undefined" && options_DrawDOD && typeof MapImageWithCombatArea !== "undefined" && MapImageWithCombatArea) ? MapImageWithCombatArea : MapImage;
         const gl = renderer3d.gl;
+        if (!gl) return;
 
         this.mapTexture = gl.createTexture();
         gl.bindTexture(gl.TEXTURE_2D, this.mapTexture);
@@ -134,10 +155,20 @@ class TerrainRenderer extends Initializable {
         const srcFormat = gl.RGBA;
         const srcType = gl.UNSIGNED_BYTE;
         gl.texImage2D(gl.TEXTURE_2D, level, internalFormat,
-            srcFormat, srcType, MapImage);
+            srcFormat, srcType, img);
         gl.generateMipmap(gl.TEXTURE_2D);
 
         console.log("TERRAIN: Loaded map image as texture");
+    }
+
+    updateMapTexture(sourceImage) {
+        const img = sourceImage || ((typeof options_DrawDOD !== "undefined" && options_DrawDOD && typeof MapImageWithCombatArea !== "undefined" && MapImageWithCombatArea) ? MapImageWithCombatArea : MapImage);
+        if (!img || !this.mapTexture || !this.initialized) return;
+        const gl = renderer3d.gl;
+        if (!gl) return;
+        gl.bindTexture(gl.TEXTURE_2D, this.mapTexture);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, img);
+        gl.generateMipmap(gl.TEXTURE_2D);
     }
 
     _createIndicesBuffers() {
@@ -150,7 +181,6 @@ class TerrainRenderer extends Initializable {
     }
 
     _createIndicesBuffer(size) {
-
         const gl = renderer3d.gl;
         const indicesSize = this._getElementCount(size);
         const indices = new Uint16Array(indicesSize);
@@ -174,7 +204,7 @@ class TerrainRenderer extends Initializable {
         gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, indices, gl.STATIC_DRAW);
 
         return buffer;
-    };
+    }
 
     // How many indices do we need for a sizeXsize terrain segment
     _getElementCount(size) {
@@ -196,147 +226,97 @@ class TerrainRenderer extends Initializable {
             for (let segment of l) {
                 segment.draw(0);
             }
-                
+    }
+
+    drawDepth(aPosLoc) {
+        if (!this.segments) return;
+        for (let l of this.segments) {
+            for (let segment of l) {
+                segment.drawDepth(aPosLoc, 0);
+            }
+        }
     }
 }
 
 class TerrainSegment {  
     gpu_vertexBuffer = [];
 
-    constructor(xstart, zstart) {
+    constructor(xstart, zstart, span, lodScale = 1.0, size = 129) {
         const gl = renderer3d.gl;
-        const tr = terrainRenderer;
+        if (!gl) return;
 
-        for (let i = 0; i < tr.TERRAINSEGMENT_LODSCALE.length; i++) {
-            const lodScale = tr.TERRAINSEGMENT_LODSCALE[i]; // 1, 4, 16
-            const size = tr.TERRAINSEGMENT_LODSIZE[i]; // 129, 33, 9
+        const totalFloats = size * size * 5; // 5 floats: x, y, z, u, v
+        const vertexData = new Float32Array(totalFloats);
 
-            const verticeBuffer = new ArrayBuffer(size * size * HEIGHTMAP_STRIDE_SIZE)
-            for (let i = xstart; i < xstart + size; i = i + lodScale) // i,j in heightmap.raw coordinates
-                for (let j = zstart; j < zstart + size; j = j + lodScale) {
-                    const xyz = this._getVertexAtHeightmapCoords(i, j);
-                    //const normal = this._calculateNormal(i, j);
-                    const offset = ((i - xstart) * size) + (j - zstart);
+        const hSize = heightmap.size;
+        const scaleX = heightmap.scalex;
+        const scaleZ = heightmap.scalez;
+        const halfTerrain = heightmap.terrainSize / 2;
 
-                    const view = new DataView(verticeBuffer, offset * HEIGHTMAP_STRIDE_SIZE, HEIGHTMAP_STRIDE_SIZE);
+        let ptr = 0;
+        for (let row = 0; row < size; row++) {
+            const i = Math.min(hSize, Math.round(xstart + row * lodScale));
+            const u = i / hSize;
+            const worldX = (i * scaleX) - halfTerrain;
 
-                    const u = i / heightmap.size;
-                    const v = j / heightmap.size;
-                    this._encodeHeightmapVertex(view, xyz, u, v);
-                }
+            for (let col = 0; col < size; col++) {
+                const j = Math.min(hSize, Math.round(zstart + col * lodScale));
+                const v = j / hSize;
+                const worldZ = (j * scaleZ) - halfTerrain;
+                const worldY = heightmap.getHeightFromOffset(hSize - j, i);
 
-            const gpuvertices = gl.createBuffer();
-            gl.bindBuffer(gl.ARRAY_BUFFER, gpuvertices);
-            gl.bufferData(gl.ARRAY_BUFFER, verticeBuffer, gl.STATIC_DRAW);
-            this.gpu_vertexBuffer.push(gpuvertices);
+                vertexData[ptr++] = worldX;
+                vertexData[ptr++] = worldY;
+                vertexData[ptr++] = worldZ;
+                vertexData[ptr++] = u;
+                vertexData[ptr++] = v;
+            }
         }
-    };
 
-    //_calculateNormal(i, j) {
-    //    const points = []
-    //    for (let x = -1; x <= 1; x++)
-    //        for (let y = -1; y <= 1; y++)
-    //            points.push(this._getVertexAtHeightmapCoords(i + x, j + y))
-            
-    //    const self = points[4];
-    //    const sum = vec3.create();
-    //    vec3.add(sum, sum, this.calculateNormalFrom3Points(self, points[0], points[1]));
-    //    vec3.add(sum, sum, this.calculateNormalFrom3Points(self, points[1], points[2]));
-    //    vec3.add(sum, sum, this.calculateNormalFrom3Points(self, points[2], points[5]));
-    //    vec3.add(sum, sum, this.calculateNormalFrom3Points(self, points[5], points[8]));
-    //    vec3.add(sum, sum, this.calculateNormalFrom3Points(self, points[8], points[7]));
-    //    vec3.add(sum, sum, this.calculateNormalFrom3Points(self, points[7], points[6]));
-    //    vec3.add(sum, sum, this.calculateNormalFrom3Points(self, points[6], points[3]));
-    //    vec3.add(sum, sum, this.calculateNormalFrom3Points(self, points[3], points[0]));
-
-    //    return vec3.normalize(sum, sum);
-    //}
-
-    //calculateNormalFrom3Points(v1, v2, v3) {
-    //    const e1 = vec3.sub(vec3.create(), v1, v2);
-    //    const e2 = vec3.sub(vec3.create(), v1, v3);
-    //    vec3.cross(e1, e1, e2);
-    //    if (e1[1] < 0)
-    //        vec3.scale(e1, e1, -1.0);
-    //    return e1;
-            
-    // }
-
-    _getVertexAtHeightmapCoords(i, j) {
-        const v = vec3.create();
-        v[0] = (i * heightmap.scalex) - (heightmap.terrainSize / 2);
-        v[1] = heightmap.getHeightFromOffset(heightmap.size - j, i);
-        v[2] = (j * heightmap.scalez) - (heightmap.terrainSize / 2);
-        return v;
+        const gpuvertices = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, gpuvertices);
+        gl.bufferData(gl.ARRAY_BUFFER, vertexData, gl.STATIC_DRAW);
+        this.gpu_vertexBuffer.push(gpuvertices);
     }
-
-
-    _encodeHeightmapVertex(view, xyz, u, v, n) {
-        view.setFloat32(0, xyz[0], true);
-        view.setFloat32(4, xyz[1], true);
-        view.setFloat32(8, xyz[2], true);
-        view.setFloat32(12, u, true);
-        view.setFloat32(16, v, true);
-        //view.setUint8(20, n[0] * 0x7F);
-        //view.setUint8(21, n[1] * 0x7F);
-        //view.setUint8(22, n[2] * 0x7F);
-    };
 
     draw(lod) {
         const gl = renderer3d.gl;
+        const vertexbuffer = this.gpu_vertexBuffer[lod || 0];
+        if (!vertexbuffer) return;
 
-        ////// Set Vertices
-        const vertexbuffer = this.gpu_vertexBuffer[lod];
         gl.bindBuffer(gl.ARRAY_BUFFER, vertexbuffer);
 
-        // define vertex coords
-        {
-            const numComponents = 3;  // pull out 3 values per iteration
-            const type = gl.FLOAT;    // the data in the buffer is 32bit floats
-            const normalize = false;  // don't normalize
-            const stride = HEIGHTMAP_STRIDE_SIZE;         // how many bytes to get from one set of values to the next
-            const offset = 0;         // how many bytes inside the buffer to start from
-            const attributeID = terrainRenderer.gpu_verticesCoords;
-            gl.vertexAttribPointer(attributeID, numComponents, type, normalize, stride, offset);
-            gl.enableVertexAttribArray(attributeID);
-        }
-        // define vertex texture coords
-        {
-            const numComponents = 2;  // pull out 2 values per iteration
-            const type = gl.FLOAT;    // the data in the buffer is 32bit floats
-            const normalize = false;  // don't normalize
-            const stride = HEIGHTMAP_STRIDE_SIZE;         // how many bytes to get from one set of values to the next
-            const offset = 12;         // how many bytes inside the buffer to start from
-            const attributeID = terrainRenderer.gpu_textureCoords;
-            gl.vertexAttribPointer(attributeID, numComponents, type, normalize, stride, offset);
-            gl.enableVertexAttribArray(attributeID);
-        }
-        //{
-        //    const numComponents = 3;
-        //    const type = gl.BYTE;
-        //    const normalize = true;
-        //    const stride = HEIGHTMAP_STRIDE_SIZE;
-        //    const offset = 20;
-        //    const attributeID = terrainRenderer.gpu_verticesNormal;
-        //    gl.vertexAttribPointer(attributeID,numComponents,type,normalize,stride,offset);
-        //    gl.enableVertexAttribArray(attributeID);
-        //}
+        const stride = HEIGHTMAP_STRIDE_SIZE; // 20 bytes
+        gl.vertexAttribPointer(terrainRenderer.gpu_verticesCoords, 3, gl.FLOAT, false, stride, 0);
+        gl.enableVertexAttribArray(terrainRenderer.gpu_verticesCoords);
 
+        gl.vertexAttribPointer(terrainRenderer.gpu_textureCoords, 2, gl.FLOAT, false, stride, 12);
+        gl.enableVertexAttribArray(terrainRenderer.gpu_textureCoords);
 
-        //// Set Indices 
-        const indicesForLod = terrainRenderer.indices[lod]
+        const indicesForLod = terrainRenderer.indices[lod || 0];
         gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, indicesForLod);
 
-        // Draw
-        gl.drawElements(gl.TRIANGLE_STRIP, terrainRenderer.TERRAINSEGMENT_LODINDEXSIZE[lod], gl.UNSIGNED_SHORT, 0);
-    };
+        gl.drawElements(gl.TRIANGLE_STRIP, terrainRenderer.TERRAINSEGMENT_LODINDEXSIZE[lod || 0], gl.UNSIGNED_SHORT, 0);
+    }
 
+    drawDepth(aPosLoc, lod) {
+        const gl = renderer3d.gl;
+        const vertexbuffer = this.gpu_vertexBuffer[lod || 0];
+        if (!vertexbuffer) return;
 
+        gl.bindBuffer(gl.ARRAY_BUFFER, vertexbuffer);
 
+        const stride = HEIGHTMAP_STRIDE_SIZE; // 20 bytes: pos at offset 0
+        gl.vertexAttribPointer(aPosLoc, 3, gl.FLOAT, false, stride, 0);
+        gl.enableVertexAttribArray(aPosLoc);
 
+        const indicesForLod = terrainRenderer.indices[lod || 0];
+        gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, indicesForLod);
+
+        gl.drawElements(gl.TRIANGLE_STRIP, terrainRenderer.TERRAINSEGMENT_LODINDEXSIZE[lod || 0], gl.UNSIGNED_SHORT, 0);
+    }
 }
 
 $(() => {
     terrainRenderer = new TerrainRenderer();
-
-})
+});

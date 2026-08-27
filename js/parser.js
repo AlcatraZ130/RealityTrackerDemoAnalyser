@@ -1626,6 +1626,10 @@ function ProjAdd(FullMessage)
 		if (radiusM > 0) {
 			triggerShootingShockwave(parsed[5], parsed[7], radiusM, color, duration, shooterId, vehId);
 		}
+
+		if (typeof trigger3DLaunchSmoke === 'function' && parsed[5] != null && parsed[7] != null) {
+			trigger3DLaunchSmoke(parsed[5], parsed[6], parsed[7], parsed[2], parsed[3]);
+		}
 	}
 }
 function ProjRemoved(FullMessage)
@@ -1636,6 +1640,13 @@ function ProjRemoved(FullMessage)
 	{
 		const index = FullMessage.getUint16(pos, true)
 		pos += 2
+		const proj = AllProj[index]
+		if (proj && typeof trigger3DExplosion === "function") {
+			let px = (typeof proj.getX === "function") ? proj.getX() : proj.X;
+			let py = (typeof proj.getY === "function") ? proj.getY() : (proj.Y || 0);
+			let pz = (typeof proj.getZ === "function") ? proj.getZ() : proj.Z;
+			trigger3DExplosion(px, py, pz, proj.type, proj.templateName);
+		}
 		delete AllProj[index]
 	}
 }
@@ -1746,6 +1757,9 @@ $(() =>
 				if (radiusM > 0) {
 					const vehId = attacker ? attacker.vehicleid : -1;
 					triggerShootingShockwave(fireX, fireZ, radiusM, color, duration, obj.AttackerID, vehId, obj.VictimID);
+					if (typeof trigger3DExplosion === "function" && obj.VictimX != null && obj.VictimY != null) {
+						trigger3DExplosion(obj.VictimX, null, obj.VictimY, 0, wName);
+					}
 				}
 			}
 		}

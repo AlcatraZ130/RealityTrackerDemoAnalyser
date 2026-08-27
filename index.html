@@ -16,7 +16,7 @@
 	<script src="js/utils/initializable.js"></script>
 	<script src="js/utils/downloadmanager.js"></script>
 	<script src="js/animations.js"></script>
-	<script src="js/canvas.js"></script>
+	<script src="js/canvas.js?v=2.3_clean_proj_1787755000"></script>
 	<script src="js/maprenderer.js"></script>
 	<script src="js/atlas.js"></script>
 	<script src="js/bookmark.js"></script>
@@ -27,7 +27,7 @@
 	<script src="js/loading.js"></script>
 	<script src="js/main.js"></script>
 	<script src="js/serverinfo.js"></script>
-	<script src="js/draggingandzoom.js"></script>
+	<script src="js/draggingandzoom.js?v=2.2_wheel_speed_1787757500"></script>
 	<script src="js/parser.js"></script>
 	<script src="js/protocol.js"></script>
 	<script src="js/killlines.js"></script>
@@ -37,22 +37,28 @@
 	<!-- Footprint vector databases (86 maps, 2692 silhouettes) -->
 	<script src="js/map_statics_db.js"></script>
 	<script src="js/mesh_2d_footprints.js"></script>
-	<script src="js/buildingheightmap.js"></script>
+	<script src="js/buildingheightmap.js?v=2.3_poly_z_fixed_1787770000"></script>
 	<script src="js/ordershistory.js"></script>
 	<script src="js/playerhistory.js"></script>
-	<script src="js/demoanalyser.js"></script>
+	<script src="js/demoanalyser.js?v=2.6_clean_buttons_1787791000"></script>
 	<script src="js/flankchrono.js"></script>
 	<script src="js/analysertimeline.js"></script>
 	<script src="js/analyserpreload.js"></script>
 	<!-- <script src="js/immutable.min.js"></script> -->
 	<script src="js/zlib_inflate.js"></script>
-	<script src="js/3d/renderer3d.js"></script>
 	<script src="js/3d/gl-matrix.js"></script>
 	<script src="js/3d/heightmap.js"></script>
-	<script src="js/3d/terrain.js"></script>
-	<script src="js/3d/buildings3d.js"></script>
+	<script src="js/3d/terrain.js?v=2.0_depth_pass_1787772000"></script>
+	<script src="js/3d/buildings3d.js?v=4.2_solid_world_1787786000"></script>
 	<script src="js/3d/geometry2d.js"></script>
 	<script src="js/3d/geometry.js"></script>
+	<script src="js/3d/pr_maps_database.js"></script>
+	<script src="js/3d/pr_water_database.js?v=2.0_accurate_sea_levels_1787756500"></script>
+	<script src="js/3d/vehicle_dictionary.js"></script>
+	<script src="js/3d/entities3d.js?v=3.4_ground_contact_fixed_1787787000"></script>
+	<script src="js/3d/lines3d.js?v=9.4_ground_contact_fixed_1787787000"></script>
+	<script src="js/3d/renderer3d.js?v=5.3_cone_quality_extreme_1787790000"></script>
+	<script src="js/3d/hud3d.js?v=2.7_ground_contact_fixed_1787787000"></script>
 	<script>if (window.module) module = window.module;</script>
 	<!-- <script src="js/init_prt.js"></script> -->
 	<link href="https://fonts.googleapis.com/css?family=Open+Sans|Roboto" rel="stylesheet">
@@ -361,7 +367,7 @@
 						Kill lines
 						<br>
 						<input type="checkbox" checked="" id="options_DrawKitIcons" onclick="checkboxClicked(this)">
-						Kit icons
+						Kit icons & Vehicle icons
 						<br>
 						<input type="checkbox" checked="" id="options_ClampVehiclesToMap" onclick="checkboxClicked(this)">
 						Clamp vehicles in map
@@ -391,23 +397,30 @@
 						<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; margin-top: 4px;">
 							<b id="lblDemoAnalyserHeader">Demo Analyser</b>
 							<div style="display: flex; gap: 3px;">
-								<button id="btnLangEN" type="button" onclick="setAnalyserLanguage('EN')" style="background: #00e5ff; color: #000; border: 1px solid #00e5ff; border-radius: 3px; font-weight: bold; font-size: 10px; padding: 1px 5px; cursor: pointer;">EN</button>
-								<button id="btnLangES" type="button" onclick="setAnalyserLanguage('ES')" style="background: rgba(255,255,255,0.1); color: #fff; border: 1px solid #555; border-radius: 3px; font-weight: bold; font-size: 10px; padding: 1px 5px; cursor: pointer;">ES</button>
-								<button id="btnLangPT" type="button" onclick="setAnalyserLanguage('PT')" style="background: rgba(255,255,255,0.1); color: #fff; border: 1px solid #555; border-radius: 3px; font-weight: bold; font-size: 10px; padding: 1px 5px; cursor: pointer;">PT</button>
+								<button id="btnLangEN" type="button" onclick="setAnalyserLanguage('EN')" style="background: #00e5ff; color: #000; border: 1px solid #00e5ff; border-radius: 3px; font-weight: bold; font-size: 9px; padding: 1px 5px; cursor: pointer; transition: all 0.15s ease;">EN</button>
+								<button id="btnLangES" type="button" onclick="setAnalyserLanguage('ES')" style="background: rgba(255,255,255,0.08); color: #bbb; border: 1px solid #555; border-radius: 3px; font-weight: bold; font-size: 9px; padding: 1px 5px; cursor: pointer; transition: all 0.15s ease;">ES</button>
+								<button id="btnLangPT" type="button" onclick="setAnalyserLanguage('PT')" style="background: rgba(255,255,255,0.08); color: #bbb; border: 1px solid #555; border-radius: 3px; font-weight: bold; font-size: 9px; padding: 1px 5px; cursor: pointer; transition: all 0.15s ease;">PT</button>
 							</div>
 						</div>
 						<label title="Draws a field of view cone representing the player's screen. If an enemy is inside this cone, they are considered visible."><input type="checkbox" id="options_DrawVisionCone" onclick="checkboxClicked(this)"> Vision Cone</label><br>
-						<label title="Deforms and casts the vision cone dynamically against building walls and terrain elevations in real-time."><input type="checkbox" id="options_VisionConeRespectsLOS" onclick="checkboxClicked(this)"> Cone with LOS</label><br>
+						<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 2px;">
+							<label title="Deforms and casts the vision cone dynamically against building walls and terrain elevations in real-time."><input type="checkbox" id="options_VisionConeRespectsLOS" onclick="checkboxClicked(this)"> Cone with LOS</label>
+							<div style="display: flex; gap: 2px;">
+								<button id="btnConeQualNormal" type="button" onclick="setVisionConeQuality('normal')" style="background: #00e5ff; color: #000; border: 1px solid #00e5ff; border-radius: 3px; font-weight: bold; font-size: 9px; padding: 1px 4px; cursor: pointer; transition: all 0.15s ease;" title="Normal Quality (64 Steps, 512x128 Depth Map)">Normal</button>
+								<button id="btnConeQualHigh" type="button" onclick="setVisionConeQuality('high')" style="background: rgba(255,255,255,0.08); color: #bbb; border: 1px solid #555; border-radius: 3px; font-weight: bold; font-size: 9px; padding: 1px 4px; cursor: pointer; transition: all 0.15s ease;" title="High Quality (128 Steps, 1024x256 Depth Map)">High</button>
+								<button id="btnConeQualUltra" type="button" onclick="setVisionConeQuality('ultra')" style="background: rgba(255,255,255,0.08); color: #bbb; border: 1px solid #555; border-radius: 3px; font-weight: bold; font-size: 9px; padding: 1px 4px; cursor: pointer; transition: all 0.15s ease;" title="Ultra Quality (256 Steps, 2048x512 Depth Map)">Ultra</button>
+								<button id="btnConeQualExtreme" type="button" onclick="setVisionConeQuality('extreme')" style="background: rgba(255,255,255,0.08); color: #bbb; border: 1px solid #555; border-radius: 3px; font-weight: 900; font-size: 9px; padding: 1px 4px; cursor: pointer; transition: all 0.15s ease;" title="EXTREME Quality (512 Steps, 4096x1024 4K Depth Map)">Extreme</button>
+							</div>
+						</div>
 						<label title="Draws a main blue gaze laser in the player's view direction. The laser turns red whenever the player is aiming at an enemy that is blocked by terrain or buildings. Also draws orange threat lasers to enemies that are visible inside the vision cone. Disabling this option also hides the gaze laser."><input type="checkbox" id="options_DrawThreatLasers" onclick="checkboxClicked(this)"> Threat Lasers</label><br>
 						<label title="Makes the vision cone, gaze laser, and threat lasers respect terrain and building line-of-sight."><input type="checkbox" id="options_ConeRespectsTerrain" onclick="checkboxClicked(this)"> Terrain/Building LOS</label><br>
-						<label title="Alerts when a kill occurs without direct Line-of-Sight (outside vision cone or blocked by building wall/terrain)."><input type="checkbox" id="options_DetectNoLOSKills" onclick="checkboxClicked(this)"> No-LOS Kill Alert</label><br>
 						<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 2px;">
 							<label title="Extends the gaze laser beyond the map's view range/fog distance to analyze aiming focus toward targets out of visual rendering range."><input type="checkbox" id="options_DrawBVRLaser" onclick="checkboxClicked(this)"> BVR Laser</label>
-							<button type="button" id="btnBVRFocusAlerts" onclick="openBVRFocusModal()" style="background: rgba(0, 229, 255, 0.15); color: #00e5ff; border: 1px solid #00e5ff; border-radius: 3px; font-weight: bold; font-size: 10px; padding: 2px 7px; cursor: pointer; transition: all 0.2s ease;" title="Ver escalafón de tiempos de enfoque de todos los jugadores">BVR Timer List</button>
+							<button type="button" id="btnBVRFocusAlerts" onclick="openBVRFocusModal()" style="background: #00e5ff; color: #000; border: 1px solid #00e5ff; border-radius: 3px; font-weight: bold; font-size: 9px; padding: 1px 5px; cursor: pointer; transition: all 0.15s ease;" title="Ver escalafón de tiempos de enfoque de todos los jugadores">BVR Timer List</button>
 						</div>
 						<label title="Tracks enemy FOBs, players, and vehicles marked by squad leader orders within time and distance thresholds and displays a red Spotted ring."><input type="checkbox" id="options_DrawSpottedIndicators" onclick="checkboxClicked(this)"> Orders & Spotted Tracking</label><br>
 						<label title="Creates a 150m radius zone around the selected player and shows a timer in seconds above nearby enemies to measure response time to threats."><input type="checkbox" id="options_DrawFlankChronometer" onclick="checkboxClicked(this)"> Engagement Timer</label><br>
-						<label title="Displays a timeline track of engagements and events for the selected player at the bottom of the screen."><input type="checkbox" id="options_DrawTimeline" onclick="checkboxClicked(this)"> Timeline</label><br>
+						<label title="Displays a timeline track of engagements and events for the selected player at the bottom of the screen (Green: kills, Orange: deaths, Red: kills without LOS)."><input type="checkbox" id="options_DrawTimeline" onclick="checkboxClicked(this)"> Timeline</label><br>
 						<label title="Shows footstep sound radii based on player speed (12m crouch, 20m walk, 35m sprint) and vehicle engine sound states (idle, moving, ignition)."><input type="checkbox" id="options_DrawMovementSoundAuras" onclick="checkboxClicked(this)"> Movement Sound Radii</label><br>
 						<label title="Displays expanding sound wave shockwaves when players shoot or hit targets (300m small arms, 750m 30mm cannons, 1500m tank main guns)."><input type="checkbox" id="options_DrawShootingSoundShockwaves" onclick="checkboxClicked(this)"> Shooting Sound Shockwaves</label><br>
 						<div id="mapViewRangeContainer" style="display: none; font-size: 11px; color: #aaa; margin-top: 5px;" title="View range extracted from game level files. Due to fog, shapes are typically discernible 100-200m before max view range on large maps (e.g. 1300m), scaling down to ~50-100m less on smaller maps (e.g. 600m).">
@@ -419,7 +432,7 @@
 						<div style="display: flex; align-items: center; gap: 8px; margin-top: 8px; margin-bottom: 6px;">
 							<input id="options_VisionConeRange" type="range" min="50" max="4000" value="500" step="25" style="flex: 1; cursor: pointer;" oninput="syncConeRangeSlider(this.value)">
 							<span id="lblConeRangeVal" style="font-size: 11px; font-weight: bold; color: #eee; white-space: nowrap;">Cone Range 500m</span>
-							<button type="button" id="btnResetConeRange" onclick="resetConeRangeToMapDefault()" style="background: rgba(255,255,255,0.1); color: #ccc; border: 1px solid #555; border-radius: 3px; font-size: 10px; padding: 2px 6px; cursor: pointer; white-space: nowrap;" title="Reset Cone Range to map's real view range">Default</button>
+							<button type="button" id="btnResetConeRange" onclick="resetConeRangeToMapDefault()" style="background: #00e5ff; color: #000; border: 1px solid #00e5ff; border-radius: 3px; font-weight: bold; font-size: 9px; padding: 1px 5px; cursor: pointer; white-space: nowrap; transition: all 0.15s ease;" title="Reset Cone Range to map's real view range">Default</button>
 						</div>
 						<b id="lblAnalyserToolsHeader">Analyser Tools & Debug</b><br>
 						<label title="Shows real-time calculated movement speed (km/h) and stance/acoustic state for the selected player or vehicle."><input type="checkbox" id="options_ShowSelectionSpeed" onclick="checkboxClicked(this)"> Selected Entity Speed & Acoustic State</label><br>
@@ -427,7 +440,9 @@
 						<label title="Shows real 2D vector footprints of static objects (buildings, walls, structures) extracted from the game's 3D collision meshes."><input type="checkbox" id="options_DrawBuildingWireframes" onclick="checkboxClicked(this); buildingHeightmap.toggleObbEditorPanel();"> Building Footprints</label><br>
 
 						<label title="Superimposes a colorized heightmap terrain grid over the map to verify elevation."><input type="checkbox" id="options_DrawHeightmapOverlay" onclick="checkboxClicked(this)"> Heightmap Overlay</label><br>
-						<label title="Projects an independent 4km (4000m) Raycast laser from the selected player that detects and stops at exact 2D building walls and terrain heightmap elevations."><input type="checkbox" id="options_Draw4KmLaser" onclick="checkboxClicked(this)"> 4km Independent LOS Laser</label><br>
+						<label title="Projects an independent Raycast LOS laser from the selected player/vehicle that detects and stops at exact building walls and terrain elevations."><input type="checkbox" id="options_Draw4KmLaser" onclick="checkboxClicked(this)"> LOS Laser</label><br>
+						<label title="Permite ver el volumen del cono de visión a través de obstáculos y edificios sólidos para inspeccionar desde fuera la visión de un soldado dentro."><input type="checkbox" id="options_VisionConeXRay" onclick="checkboxClicked(this)"> X-Ray Cono</label><br>
+						<label title="Permite ver todos los soldados, vehículos, armas desplegables, bases FOB y estructuras a través de muros, montañas y el terreno."><input type="checkbox" id="options_Wallhack" onclick="checkboxClicked(this)"> X-Ray</label><br>
 
 						<div id="devTestObbEditorPanel" style="display: none; background: rgba(0, 15, 30, 0.95); border: 1px solid #00e5ff; border-radius: 4px; padding: 8px; margin-top: 6px; font-size: 11px; color: #fff; max-width: 580px;">
 							<div style="font-weight: bold; color: #ffee00; margin-bottom: 6px; display: flex; justify-content: space-between; align-items: center;">
@@ -494,6 +509,7 @@
 				<div id="renderers">
 					<canvas id="map"></canvas>
 					<canvas id="map3d" style="display: none;"></canvas>
+					<canvas id="map3dHud" style="position: absolute; left: 0; top: 0; width: 100%; height: 100%; pointer-events: none; z-index: 1; display: none;"></canvas>
 				</div>
 				<div id="controlBarContainer">
 					<button id="startPauseButton" class="state-paused" type="button" onclick="togglePlay()">

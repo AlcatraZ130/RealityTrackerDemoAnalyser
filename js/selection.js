@@ -126,6 +126,7 @@ function selection_SelectPlayer(i, allowHighlight)
 		$("#selection").dialog("close")
 
 	selection_UpdateInformationBox()
+	if (typeof analyserTimeline !== "undefined") analyserTimeline.draw();
 
 	requestUpdate();
 }
@@ -154,6 +155,7 @@ function selection_SelectVehicle(i)
 		}
 		SelectedVehicle = SELECTED_NOTHING;
 		selection_UpdateInformationBox();
+		if (typeof analyserTimeline !== "undefined") analyserTimeline.draw();
 		return;
 	}
 
@@ -165,12 +167,12 @@ function selection_SelectVehicle(i)
 	const v = AllVehicles[i];
 
 	if (SelectedVehicle in vehicleTables) {
-		vehicleTable_Update(SelectedVehicle);
 		vehicleTables[SelectedVehicle].classList.add("vehicleTable-selected");
 	}
 
 	selection_UpdateInformationBox();
 	$("#selection").dialog("open");
+	if (typeof analyserTimeline !== "undefined") analyserTimeline.draw();
 	requestUpdate();
 }
 

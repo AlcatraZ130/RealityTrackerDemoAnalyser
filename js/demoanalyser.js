@@ -9,6 +9,32 @@ var options_DrawVisionCone = false;
 var options_VisionConeRespectsLOS = true;
 var options_VisionConeRange = 150;
 var options_VisionConeAngle = 94.9;
+var options_VisionConeXRay = false;
+var options_Wallhack = false;
+var options_VisionConeQuality = "normal"; // "normal" (64 steps), "high" (128 steps), "ultra" (256 steps), "extreme" (512 steps)
+
+function setVisionConeQuality(qual) {
+    options_VisionConeQuality = qual;
+    const btnN = document.getElementById("btnConeQualNormal");
+    const btnH = document.getElementById("btnConeQualHigh");
+    const btnU = document.getElementById("btnConeQualUltra");
+    const btnE = document.getElementById("btnConeQualExtreme");
+
+    const inactiveStyle = "background: rgba(255,255,255,0.08); color: #bbb; border: 1px solid #555; border-radius: 3px; font-weight: bold; font-size: 9px; padding: 1px 4px; cursor: pointer; transition: all 0.15s ease;";
+    const normalStyle = "background: #00e5ff; color: #000; border: 1px solid #00e5ff; border-radius: 3px; font-weight: bold; font-size: 9px; padding: 1px 4px; cursor: pointer; transition: all 0.15s ease;";
+    const highStyle = "background: #00ff66; color: #000; border: 1px solid #00ff66; border-radius: 3px; font-weight: bold; font-size: 9px; padding: 1px 4px; cursor: pointer; transition: all 0.15s ease;";
+    const ultraStyle = "background: #ffb700; color: #000; border: 1px solid #ffb700; border-radius: 3px; font-weight: bold; font-size: 9px; padding: 1px 4px; cursor: pointer; transition: all 0.15s ease;";
+    const extremeStyle = "background: #ff2a55; color: #fff; border: 1px solid #ff2a55; border-radius: 3px; font-weight: 900; font-size: 9px; padding: 1px 4px; cursor: pointer; transition: all 0.15s ease;";
+
+    if (btnN) btnN.style.cssText = (qual === "normal") ? normalStyle : inactiveStyle;
+    if (btnH) btnH.style.cssText = (qual === "high") ? highStyle : inactiveStyle;
+    if (btnU) btnU.style.cssText = (qual === "ultra") ? ultraStyle : inactiveStyle;
+    if (btnE) btnE.style.cssText = (qual === "extreme") ? extremeStyle : inactiveStyle;
+
+    if (typeof renderer3d !== "undefined" && renderer3d.initialized && typeof renderer3d.updateVisionConeQuality === "function") {
+        renderer3d.updateVisionConeQuality(qual);
+    }
+}
 
 var options_DrawThreatLasers = false;
 var options_ConeRespectsTerrain = true;
@@ -675,15 +701,21 @@ function toggleCameraTracking(forceState = null) {
 function updateCameraTracking() {
 	if (!options_CameraTracking) return;
 	if (typeof is3DMode !== 'undefined' && is3DMode) return;
-	if (typeof SelectedPlayer === 'undefined' || SelectedPlayer == SELECTED_NOTHING) return;
-	if (typeof MouseIsDown !== 'undefined' && MouseIsDown) return;
-
-	const p = AllPlayers[SelectedPlayer];
-	if (!p || p.isJoining) return;
-
-	const pInfo = getPlayerWorldPos(p);
-	const worldX = pInfo.x;
-	const worldZ = pInfo.z;
+	let worldX = null, worldZ = null;
+	if (typeof SelectedPlayer !== 'undefined' && SelectedPlayer != SELECTED_NOTHING && typeof AllPlayers !== "undefined") {
+		const p = AllPlayers[SelectedPlayer];
+		if (p && !p.isJoining) {
+			const pInfo = getPlayerWorldPos(p);
+			worldX = pInfo.x;
+			worldZ = pInfo.z;
+		}
+	} else if (typeof SelectedVehicle !== 'undefined' && SelectedVehicle != SELECTED_NOTHING && typeof AllVehicles !== "undefined") {
+		const v = AllVehicles[SelectedVehicle];
+		if (v) {
+			worldX = (typeof v.getX === "function") ? v.getX() : v.X;
+			worldZ = (typeof v.getZ === "function") ? v.getZ() : v.Z;
+		}
+	}
 	if (worldX == null || isNaN(worldX) || worldZ == null || isNaN(worldZ)) return;
 
 	// Calculate un-offset zoomed coordinate
@@ -692,9 +724,11 @@ function updateCameraTracking() {
 	const zX = uX * CameraZoom;
 	const zY = uY * CameraZoom;
 
-	// Exact target camera offset to center target at (Canvas.width / 2, Canvas.height / 2)
-	const targetCameraX = (Canvas.width / 2) - zX;
-	const targetCameraY = (Canvas.height / 2) - zY;
+	const scale = (typeof options_canvasScale !== "undefined" && options_canvasScale > 0) ? options_canvasScale : 1.0;
+
+	// Exact target camera offset accounting for UI scaling
+	const targetCameraX = ((Canvas.width / 2) / scale) - zX;
+	const targetCameraY = ((Canvas.height / 2) / scale) - zY;
 
 	const dx = targetCameraX - CameraX;
 	const dy = targetCameraY - CameraY;
@@ -1580,10 +1614,6 @@ var ANALYSER_I18N = {
 				label: "Terrain/Building LOS",
 				title: "Makes the vision cone, gaze laser, and threat lasers respect terrain and building line-of-sight."
 			},
-			options_DetectNoLOSKills: {
-				label: "No-LOS Kill Alert",
-				title: "Alerts when a kill occurs without direct Line-of-Sight (outside vision cone or blocked by building wall/terrain)."
-			},
 			options_DrawBVRLaser: {
 				label: "BVR Laser",
 				title: "Extends the gaze laser beyond the map's view range/fog distance to analyze aiming focus toward targets out of visual rendering range."
@@ -1598,7 +1628,7 @@ var ANALYSER_I18N = {
 			},
 			options_DrawTimeline: {
 				label: "Timeline",
-				title: "Displays a timeline track of engagements and events for the selected player at the bottom of the screen."
+				title: "Displays a timeline track of engagements and events for the selected player at the bottom of the screen (Green: kills, Orange: deaths, Red: kills without LOS)."
 			},
 			options_DrawMovementSoundAuras: {
 				label: "Movement Sound Radii",
@@ -1674,10 +1704,6 @@ var ANALYSER_I18N = {
 				label: "L\u00ednea de Visi\u00f3n (LOS)",
 				title: "Calcula en tiempo real el bloqueo de visi\u00f3n producido por el relieve del terreno y los muros vectoriales de los edificios."
 			},
-			options_DetectNoLOSKills: {
-				label: "Alerta de Baja sin Visibilidad (No-LOS)",
-				title: "Registra y resalta en el feed las bajas que ocurren sin l\u00ednea de visi\u00f3n directa (de espaldas o bloqueadas por paredes/terreno)."
-			},
 			options_DrawBVRLaser: {
 				label: "L\u00e1ser BVR (M\u00e1s all\u00e1 del Rango Visual)",
 				title: "Extiende el l\u00e1ser de mirada m\u00e1s all\u00e1 de la distancia l\u00edmite de renderizado/niebla del mapa para analizar si el jugador mantiene el foco en objetivos fuera de su alcance visual."
@@ -1692,7 +1718,7 @@ var ANALYSER_I18N = {
 			},
 			options_DrawTimeline: {
 				label: "L\u00ednea de Tiempo T\u00e1ctica",
-				title: "Muestra una barra de eventos cronol\u00f3gica en la parte inferior para navegar instant\u00e1neamente entre combates y enfrentamientos."
+				title: "Muestra una barra cronol\u00f3gica de eventos en la parte inferior para el jugador seleccionado (Verde: bajas, Naranja: muertes, Rojo: bajas sin LOS)."
 			},
 			options_DrawMovementSoundAuras: {
 				label: "Radios de Sonido de Movimiento",
@@ -1768,10 +1794,6 @@ var ANALYSER_I18N = {
 				label: "Linha de Vis\u00e3o (LOS)",
 				title: "Calcula em tempo real o bloqueio de vis\u00e3o produzido pelo relevo do terreno e paredes dos edif\u00edcios."
 			},
-			options_DetectNoLOSKills: {
-				label: "Alerta de Abate sem Vis\u00e3o (No-LOS)",
-				title: "Notifica e destaca no feed os abates que ocorrem sem linha de vis\u00e3o direta (fora do cone ou bloqueados por paredes/terreno)."
-			},
 			options_DrawBVRLaser: {
 				label: "Laser BVR (Al\u00e9m do Alcance Visual)",
 				title: "Estende o laser de vis\u00e3o al\u00e9m da dist\u00e2ncia limite de renderiza\u00e7\u00e3o/neblina do mapa para analisar se o jogador mant\u00e9m o foco em alvos fora do seu alcance visual."
@@ -1786,7 +1808,7 @@ var ANALYSER_I18N = {
 			},
 			options_DrawTimeline: {
 				label: "Linha do Tempo T\u00e1tica",
-				title: "Exibe uma barra cronol\u00f3gica de eventos na parte inferior para navegar instantaneamente entre engajamentos."
+				title: "Exibe uma barra cronol\u00f3gica de eventos na parte inferior para o jogador selecionado (Verde: abates, Laranja: mortes, Vermelho: abates sem LOS)."
 			},
 			options_DrawMovementSoundAuras: {
 				label: "Raios de Som de Movimento",

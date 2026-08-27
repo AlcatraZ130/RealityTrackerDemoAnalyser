@@ -145,21 +145,8 @@ class GeometryRenderer extends Initializable {
     }
 
     draw() {
-        const gl = renderer3d.gl;
-
-        gl.useProgram(this.prog);
-        gl.uniformMatrix4fv(
-            this.gpu_uniform_projectionMatrix,
-            false,
-            renderer3d.getCurrentProjectionMatrix());
-        gl.uniformMatrix4fv(
-            this.gpu_uniform_viewMatrix,
-            false,
-            renderer3d.getCurrentViewMatrix());
-
-        for (var i in AllVehicles)
-            this.drawVehicle(i);
-
+        // Replaced by entities3dRenderer
+        return;
     }
 }
 
