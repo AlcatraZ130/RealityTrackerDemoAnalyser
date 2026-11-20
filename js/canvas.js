@@ -819,7 +819,9 @@ function drawVehicle(i)
 	Context.translate(x, y)
 	if (!v.isUAVVehicle)
 		Context.rotate(rot / 180 * Math.PI)
-	Context.drawImage(v.ns_mapImage[color], -16, -16, 32, 32)
+	const mapImg = (v.ns_mapImage && v.ns_mapImage[color]) ? v.ns_mapImage[color] : (coloredIcons["mini_shp_light"] && coloredIcons["mini_shp_light"][color]);
+	if (mapImg)
+		Context.drawImage(mapImg, -16, -16, 32, 32)
 	Context.restore()
 
 	if (v.isFlyingVehicle && options_DrawVehicleHeight)

@@ -9,10 +9,10 @@ function atlasLoaded()
 	if (!(atlasJSON_loaded && atlasPNG_loaded))
 		return
 
-	// Draw the atlas on a temp canvas
+	// Draw the atlas on a temp canvas (uses dynamic dimensions to support future PR updates)
 	var c = document.createElement('canvas');
-	c.width = 16384
-	c.height = 33
+	c.width = atlasPNG.naturalWidth || atlasPNG.width || 16384
+	c.height = atlasPNG.naturalHeight || atlasPNG.height || 33
 	atlascontext = c.getContext("2d")
 	atlascontext.drawImage(atlasPNG, 0, 0)
 

@@ -113,6 +113,17 @@ function copyTrackerLink() {
 	u += '&cx=' + parseFloat(getCanvasCenter()[0]).toFixed(2);
 	u += '&cy=' + parseFloat(getCanvasCenter()[1]).toFixed(2);
 	u += '&czoom=' + parseFloat(CameraZoom).toFixed(2);
+	if (typeof viewportMode !== "undefined" && typeof VIEWPORT_2D !== "undefined" && viewportMode !== VIEWPORT_2D) {
+		const modeStr = (typeof VIEWPORT_3D_TOPDOWN !== "undefined" && viewportMode === VIEWPORT_3D_TOPDOWN) ? "3dtop" : "3dfree";
+		u += '&mode=' + modeStr;
+		if (typeof renderer3d !== "undefined" && renderer3d && renderer3d.cameraPos) {
+			u += '&x3=' + parseFloat(renderer3d.cameraPos[0]).toFixed(1);
+			u += '&y3=' + parseFloat(renderer3d.cameraPos[1]).toFixed(1);
+			u += '&z3=' + parseFloat(renderer3d.cameraPos[2]).toFixed(1);
+			u += '&yaw=' + parseFloat(renderer3d.cameraYaw || 0).toFixed(1);
+			u += '&pitch=' + parseFloat(renderer3d.cameraPitch || 0).toFixed(1);
+		}
+	}
 	copyTextToClipboard(u);
 }
 

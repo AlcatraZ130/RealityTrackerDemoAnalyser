@@ -316,6 +316,107 @@ class Lines3dRenderer extends Initializable {
         }
     }
 
+    // Tactical 4-arc segmented reticle ring on ground (calm slow rotation, matches 2D Spotted reticle)
+    add3DSpottedReticle(cx, cy, cz, radius, thickness, r, g, b, a, rotRad = 0) {
+        const arcCount = 4;
+        const arcSpan = (Math.PI * 2) / arcCount;
+        const drawSpan = arcSpan * 0.62; // 4 clean arcs with 38% tactical gaps
+        const segsPerArc = 7;
+        const innerR = Math.max(0.05, radius);
+        const outerR = innerR + thickness;
+
+        for (let k = 0; k < arcCount; k++) {
+            const baseA = rotRad + k * arcSpan - drawSpan * 0.5;
+            const step = drawSpan / segsPerArc;
+            for (let s = 0; s < segsPerArc; s++) {
+                const t1 = baseA + s * step;
+                const t2 = baseA + (s + 1) * step;
+                const c1 = Math.cos(t1), s1 = Math.sin(t1);
+                const c2 = Math.cos(t2), s2 = Math.sin(t2);
+
+                const inX1 = cx + c1 * innerR, inZ1 = cz + s1 * innerR;
+                const outX1 = cx + c1 * outerR, outZ1 = cz + s1 * outerR;
+                const inX2 = cx + c2 * innerR, inZ2 = cz + s2 * innerR;
+                const outX2 = cx + c2 * outerR, outZ2 = cz + s2 * outerR;
+
+                this.addTri(inX1, cy, -inZ1, outX1, cy, -outZ1, inX2, cy, -inZ2, r, g, b, a);
+                this.addTri(outX1, cy, -outZ1, outX2, cy, -outZ2, inX2, cy, -inZ2, r, g, b, a);
+            }
+        }
+    }
+
+    // Tactical Flag Capture Sector: crisp terrain perimeter + soft inward ground fade + low vertical curtain (1.45m)
+    add3DFlagSector(cx, cz, radius, r, g, b, segments = 56) {
+        if (!Number.isFinite(cx) || !Number.isFinite(cz) || !(radius > 0)) return;
+        const dTheta = (Math.PI * 2) / segments;
+        const bandW = Math.max(0.42, Math.min(1.05, radius * 0.015));
+        const innerFadeR = Math.max(0.0, radius - Math.min(radius * 0.26, 5.5));
+        const innerBandR = Math.max(0.0, radius - bandW);
+        const curtainH = 1.45;
+
+        const sampleH = (wx, wz) => {
+            if (typeof heightmap !== "undefined") {
+                const h = heightmap.getHeightFromCoords(wx, wz);
+                if (Number.isFinite(h)) return h + 0.14;
+            }
+            return 0.14;
+        };
+
+        for (let i = 0; i < segments; i++) {
+            const t1 = i * dTheta;
+            const t2 = (i + 1) * dTheta;
+            const c1 = Math.cos(t1), s1 = Math.sin(t1);
+            const c2 = Math.cos(t2), s2 = Math.sin(t2);
+
+            // Outer perimeter coordinates
+            const ox1 = cx + c1 * radius, oz1 = cz + s1 * radius;
+            const ox2 = cx + c2 * radius, oz2 = cz + s2 * radius;
+            const oy1 = sampleH(ox1, oz1);
+            const oy2 = sampleH(ox2, oz2);
+
+            // Inner edge of crisp perimeter line
+            const bx1 = cx + c1 * innerBandR, bz1 = cz + s1 * innerBandR;
+            const bx2 = cx + c2 * innerBandR, bz2 = cz + s2 * innerBandR;
+            const by1 = sampleH(bx1, bz1);
+            const by2 = sampleH(bx2, bz2);
+
+            // 1. Crisp terrain perimeter band
+            this.addTri(bx1, by1, -bz1, ox1, oy1, -oz1, bx2, by2, -bz2, r, g, b, 0.72);
+            this.addTri(ox1, oy1, -oz1, ox2, oy2, -oz2, bx2, by2, -bz2, r, g, b, 0.72);
+
+            // 2. Soft inward ground gradient (0.20 -> 0.0)
+            if (innerFadeR < innerBandR) {
+                const fx1 = cx + c1 * innerFadeR, fz1 = cz + s1 * innerFadeR;
+                const fx2 = cx + c2 * innerFadeR, fz2 = cz + s2 * innerFadeR;
+                const fy1 = sampleH(fx1, fz1);
+                const fy2 = sampleH(fx2, fz2);
+
+                this._addTriGrad(
+                    fx1, fy1, -fz1, r, g, b, 0.0,
+                    bx1, by1, -bz1, r, g, b, 0.20,
+                    fx2, fy2, -fz2, r, g, b, 0.0
+                );
+                this._addTriGrad(
+                    bx1, by1, -bz1, r, g, b, 0.20,
+                    bx2, by2, -bz2, r, g, b, 0.20,
+                    fx2, fy2, -fz2, r, g, b, 0.0
+                );
+            }
+
+            // 3. Low holographic vertical curtain (0.28 at ground -> 0.0 at +1.45m)
+            this._addTriGrad(
+                ox1, oy1, -oz1, r, g, b, 0.28,
+                ox1, oy1 + curtainH, -oz1, r, g, b, 0.0,
+                ox2, oy2, -oz2, r, g, b, 0.28
+            );
+            this._addTriGrad(
+                ox1, oy1 + curtainH, -oz1, r, g, b, 0.0,
+                ox2, oy2 + curtainH, -oz2, r, g, b, 0.0,
+                ox2, oy2, -oz2, r, g, b, 0.28
+            );
+        }
+    }
+
     // Large terrain ring that samples heightmap elevation at every vertex to hug hills & valleys
     add3DTerrainRing(cx, cz, innerRadius, outerRadius, r, g, b, a, segments = 36) {
         const dTheta = (Math.PI * 2) / segments;
@@ -342,6 +443,144 @@ class Lines3dRenderer extends Initializable {
 
             this.addTri(inX1, inY1, -inZ1, outX1, outY1, -outZ1, inX2, inY2, -inZ2, r, g, b, a);
             this.addTri(outX1, outY1, -outZ1, outX2, outY2, -outZ2, inX2, inY2, -inZ2, r, g, b, a);
+        }
+    }
+
+    // Terrain-hugging ring with crisp outer edge + smooth inward alpha fade
+    add3DSoftTerrainRing(cx, cz, radius, bandW, fadeInW, r, g, b, a, segments = 48) {
+        if (!Number.isFinite(cx) || !Number.isFinite(cz) || !(radius > 0.1) || !(a > 0.005)) return;
+        const dTheta = (Math.PI * 2) / segments;
+        const innerBandR = Math.max(0.0, radius - bandW);
+        const innerFadeR = Math.max(0.0, innerBandR - fadeInW);
+        const fadeAlpha = a * 0.28;
+
+        const sampleH = (wx, wz) => {
+            if (typeof heightmap !== "undefined") {
+                const h = heightmap.getHeightFromCoords(wx, wz);
+                if (Number.isFinite(h)) return h + 0.14;
+            }
+            return 0.14;
+        };
+
+        for (let i = 0; i < segments; i++) {
+            const t1 = i * dTheta;
+            const t2 = (i + 1) * dTheta;
+            const c1 = Math.cos(t1), s1 = Math.sin(t1);
+            const c2 = Math.cos(t2), s2 = Math.sin(t2);
+
+            const ox1 = cx + c1 * radius, oz1 = cz + s1 * radius;
+            const ox2 = cx + c2 * radius, oz2 = cz + s2 * radius;
+            const oy1 = sampleH(ox1, oz1);
+            const oy2 = sampleH(ox2, oz2);
+
+            const bx1 = cx + c1 * innerBandR, bz1 = cz + s1 * innerBandR;
+            const bx2 = cx + c2 * innerBandR, bz2 = cz + s2 * innerBandR;
+            const by1 = sampleH(bx1, bz1);
+            const by2 = sampleH(bx2, bz2);
+
+            // Crisp perimeter band
+            this.addTri(bx1, by1, -bz1, ox1, oy1, -oz1, bx2, by2, -bz2, r, g, b, a);
+            this.addTri(ox1, oy1, -oz1, ox2, oy2, -oz2, bx2, by2, -bz2, r, g, b, a);
+
+            // Soft inward gradient
+            if (fadeInW > 0.05 && innerFadeR < innerBandR) {
+                const fx1 = cx + c1 * innerFadeR, fz1 = cz + s1 * innerFadeR;
+                const fx2 = cx + c2 * innerFadeR, fz2 = cz + s2 * innerFadeR;
+                const fy1 = sampleH(fx1, fz1);
+                const fy2 = sampleH(fx2, fz2);
+
+                this._addTriGrad(
+                    fx1, fy1, -fz1, r, g, b, 0.0,
+                    bx1, by1, -bz1, r, g, b, fadeAlpha,
+                    fx2, fy2, -fz2, r, g, b, 0.0
+                );
+                this._addTriGrad(
+                    bx1, by1, -bz1, r, g, b, fadeAlpha,
+                    bx2, by2, -bz2, r, g, b, fadeAlpha,
+                    fx2, fy2, -fz2, r, g, b, 0.0
+                );
+            }
+        }
+    }
+
+    // Terrain-hugging dashed perimeter ring (with optional subtle inward gradient)
+    add3DDashedTerrainRing(cx, cz, radius, thickness, r, g, b, a, dashCount = 40, innerFadeW = 0) {
+        if (!Number.isFinite(cx) || !Number.isFinite(cz) || !(radius > 0.1) || !(a > 0.005)) return;
+        const innerR = Math.max(0.0, radius - thickness);
+        const fadeR = Math.max(0.0, innerR - innerFadeW);
+        const slotAngle = (Math.PI * 2) / dashCount;
+        const dashSpan = slotAngle * 0.58;
+        const subSegs = radius > 60 ? 2 : 1;
+
+        const sampleH = (wx, wz) => {
+            if (typeof heightmap !== "undefined") {
+                const h = heightmap.getHeightFromCoords(wx, wz);
+                if (Number.isFinite(h)) return h + 0.15;
+            }
+            return 0.15;
+        };
+
+        for (let d = 0; d < dashCount; d++) {
+            const startA = d * slotAngle;
+            for (let s = 0; s < subSegs; s++) {
+                const t1 = startA + (s / subSegs) * dashSpan;
+                const t2 = startA + ((s + 1) / subSegs) * dashSpan;
+                const c1 = Math.cos(t1), s1 = Math.sin(t1);
+                const c2 = Math.cos(t2), s2 = Math.sin(t2);
+
+                const ox1 = cx + c1 * radius, oz1 = cz + s1 * radius;
+                const ox2 = cx + c2 * radius, oz2 = cz + s2 * radius;
+                const oy1 = sampleH(ox1, oz1);
+                const oy2 = sampleH(ox2, oz2);
+
+                const ix1 = cx + c1 * innerR, iz1 = cz + s1 * innerR;
+                const ix2 = cx + c2 * innerR, iz2 = cz + s2 * innerR;
+                const iy1 = sampleH(ix1, iz1);
+                const iy2 = sampleH(ix2, iz2);
+
+                this.addTri(ix1, iy1, -iz1, ox1, oy1, -oz1, ix2, iy2, -iz2, r, g, b, a);
+                this.addTri(ox1, oy1, -oz1, ox2, oy2, -oz2, ix2, iy2, -iz2, r, g, b, a);
+
+                if (innerFadeW > 0.05 && fadeR < innerR) {
+                    const fx1 = cx + c1 * fadeR, fz1 = cz + s1 * fadeR;
+                    const fx2 = cx + c2 * fadeR, fz2 = cz + s2 * fadeR;
+                    const fy1 = sampleH(fx1, fz1);
+                    const fy2 = sampleH(fx2, fz2);
+                    const fa = a * 0.18;
+
+                    this._addTriGrad(
+                        fx1, fy1, -fz1, r, g, b, 0.0,
+                        ix1, iy1, -iz1, r, g, b, fa,
+                        fx2, fy2, -fz2, r, g, b, 0.0
+                    );
+                    this._addTriGrad(
+                        ix1, iy1, -iz1, r, g, b, fa,
+                        ix2, iy2, -iz2, r, g, b, fa,
+                        fx2, fy2, -fz2, r, g, b, 0.0
+                    );
+                }
+            }
+        }
+    }
+
+    // Clean 3D dashed vector line (for tactical SL orders, etc.)
+    add3DDashedLine(x1, y1, z1, x2, y2, z2, r, g, b, a, dashLen = 4.0, gapLen = 2.4) {
+        const dx = x2 - x1, dy = y2 - y1, dz = z2 - z1;
+        const totalLen = Math.hypot(dx, dy, dz);
+        if (totalLen < 0.1) return;
+        const step = dashLen + gapLen;
+        const maxDashes = 110;
+        const effStep = Math.max(step, totalLen / maxDashes);
+        const effDash = effStep * (dashLen / step);
+
+        for (let dist = 0; dist < totalLen; dist += effStep) {
+            const t0 = dist / totalLen;
+            const t1 = Math.min(1.0, (dist + effDash) / totalLen);
+            this.addLine(
+                x1 + dx * t0, y1 + dy * t0, z1 + dz * t0,
+                x1 + dx * t1, y1 + dy * t1, z1 + dz * t1,
+                r, g, b, a
+            );
         }
     }
 
@@ -466,10 +705,11 @@ class Lines3dRenderer extends Initializable {
         v.ns_auraOpacity += (targetOpacity - v.ns_auraOpacity) * lerpFactor;
 
         if (v.ns_auraRadius > 0.5 && v.ns_auraOpacity > 0.02) {
-            // Vehicle Green color (#00ff66 in 2D)
-            const r = 0.0, g = 1.0, b = 0.40;
-            const bandW = Math.max(0.8, v.ns_auraRadius * 0.03);
-            this.add3DTerrainRing(vx, vz, Math.max(0, v.ns_auraRadius - bandW), v.ns_auraRadius, r, g, b, v.ns_auraOpacity, 42);
+            // Soft tactical emerald ring with smooth inward fade
+            const r = 0.22, g = 0.82, b = 0.48;
+            const bandW = Math.max(0.55, Math.min(2.2, v.ns_auraRadius * 0.014));
+            const fadeW = Math.min(v.ns_auraRadius * 0.14, 14.0);
+            this.add3DSoftTerrainRing(vx, vz, v.ns_auraRadius, bandW, fadeW, r, g, b, v.ns_auraOpacity, 48);
         }
     }
 
@@ -552,10 +792,12 @@ class Lines3dRenderer extends Initializable {
         let r = 0.0, g = 1.0, b = 0.40, a = 0.95; // Open Sky Green
         if (hitType === "building") {
             r = 0.0; g = 0.90; b = 1.0; a = 0.98; // Building Cyan
-            this.add3DGroundRing(hitX, hitY + 0.1, hitZ, 0.3, 0.7, r, g, b, 0.95, 24);
+            this.add3DGroundRing(hitX, hitY + 0.12, hitZ, 0.58, 0.74, r, g, b, 0.92, 24);
+            this.add3DGroundRing(hitX, hitY + 0.12, hitZ, 0.08, 0.22, r, g, b, 0.96, 16);
         } else if (hitType === "terrain") {
             r = 1.0; g = 0.65; b = 0.0; a = 0.98; // Terrain Gold
-            this.add3DTerrainRing(hitX, hitZ, 0.4, 0.9, r, g, b, 0.95, 24);
+            this.add3DTerrainRing(hitX, hitZ, 0.68, 0.88, r, g, b, 0.92, 24);
+            this.add3DTerrainRing(hitX, hitZ, 0.10, 0.26, r, g, b, 0.96, 16);
         }
 
         // Draw 3D Laser Beam with High-Contrast Solid Black Outline
@@ -828,81 +1070,230 @@ class Lines3dRenderer extends Initializable {
         }
     }
 
-    add3DArrow(x1, y1, z1, x2, y2, z2, r, g, b, a, camX, camY, camZ, shaftW, headW, headL, borderR, borderG, borderB) {
+    _addTriGrad(x1, y1, z1, r1, g1, b1, a1, x2, y2, z2, r2, g2, b2, a2, x3, y3, z3, r3, g3, b3, a3) {
+        const offset = 6000;
+        if (this.triVertexCount + 3 > (this.maxVertices - offset)) return;
+
+        const idx = (offset + this.triVertexCount) * 3;
+        const cIdx = (offset + this.triVertexCount) * 4;
+
+        this.positions[idx] = x1; this.positions[idx + 1] = y1; this.positions[idx + 2] = z1;
+        this.colors[cIdx] = r1; this.colors[cIdx + 1] = g1; this.colors[cIdx + 2] = b1; this.colors[cIdx + 3] = a1;
+
+        this.positions[idx + 3] = x2; this.positions[idx + 4] = y2; this.positions[idx + 5] = z2;
+        this.colors[cIdx + 4] = r2; this.colors[cIdx + 5] = g2; this.colors[cIdx + 6] = b2; this.colors[cIdx + 7] = a2;
+
+        this.positions[idx + 6] = x3; this.positions[idx + 7] = y3; this.positions[idx + 8] = z3;
+        this.colors[cIdx + 8] = r3; this.colors[cIdx + 9] = g3; this.colors[cIdx + 10] = b3; this.colors[cIdx + 11] = a3;
+
+        this.triVertexCount += 3;
+    }
+
+    _addGradQuad(p1x, p1y, p1z, p2x, p2y, p2z, n1x, n1y, n1z, n2x, n2y, n2z, hw1, hw2, r, g, b, a1, a2) {
+        const v1x = p1x - n1x * hw1, v1y = p1y - n1y * hw1, v1z = p1z - n1z * hw1;
+        const v2x = p1x + n1x * hw1, v2y = p1y + n1y * hw1, v2z = p1z + n1z * hw1;
+        const v3x = p2x - n2x * hw2, v3y = p2y - n2y * hw2, v3z = p2z - n2z * hw2;
+        const v4x = p2x + n2x * hw2, v4y = p2y + n2y * hw2, v4z = p2z + n2z * hw2;
+
+        this._addTriGrad(v1x, v1y, v1z, r, g, b, a1, v2x, v2y, v2z, r, g, b, a1, v3x, v3y, v3z, r, g, b, a2);
+        this._addTriGrad(v2x, v2y, v2z, r, g, b, a1, v4x, v4y, v4z, r, g, b, a2, v3x, v3y, v3z, r, g, b, a2);
+    }
+
+    add3DKillTracer(x1, y1, z1, x2, y2, z2, r, g, b, coreR, coreG, coreB, fade, camX, camY, camZ, style = "direct", isSelected = false) {
         const dx = x2 - x1;
         const dy = y2 - y1;
         const dz = z2 - z1;
         const len = Math.hypot(dx, dy, dz);
-        if (len < 0.5) return;
-
-        const ux = dx / len;
-        const uy = dy / len;
-        const uz = dz / len;
+        if (len < 0.35) return;
 
         const mx = (x1 + x2) * 0.5;
         const my = (y1 + y2) * 0.5;
         const mz = (z1 + z2) * 0.5;
+        const camDist = Math.hypot(camX - mx, camY - my, camZ - mz);
 
-        const vcx = camX - mx;
-        const vcy = camY - my;
-        const vcz = camZ - mz;
+        // Camera-distance adaptive thickness: sleek up close, clearly legible on bright desert/snow maps
+        const baseHalfW = Math.max(0.042, Math.min(0.46, camDist * 0.00125)) * (isSelected ? 1.35 : 1.0);
+        const outlineHalfW = baseHalfW * 2.55;
+        const haloHalfW = baseHalfW * 1.85;
+        const coreHalfW = baseHalfW * 0.68;
 
-        let nx = uy * vcz - uz * vcy;
-        let ny = uz * vcx - ux * vcz;
-        let nz = ux * vcy - uy * vcx;
-        const nLen = Math.hypot(nx, ny, nz);
-        if (nLen < 0.0001) return;
+        const outR = r * 0.22;
+        const outG = g * 0.22;
+        const outB = b * 0.26;
 
-        nx /= nLen;
-        ny /= nLen;
-        nz /= nLen;
+        const isArc = (style === "indirect");
+        const isBleedout = (style === "bleedout");
+        const arcHeight = isArc ? Math.min(48.0, Math.max(4.5, len * 0.22)) : 0.0;
+        const segCount = isArc ? 14 : (isBleedout ? Math.min(24, Math.max(6, Math.floor(len / 8.0))) : 6);
 
-        const actualHeadLen = Math.min(len * 0.40, headL || 3.8);
-        const actualHeadWidth = headW || 1.35;
-        const halfShaft = (shaftW || 0.45) * 0.5;
+        const samplePt = (t) => {
+            const px = x1 + dx * t;
+            const pz = z1 + dz * t;
+            const py = y1 + dy * t + (isArc ? (4.0 * arcHeight * t * (1.0 - t)) : 0.0);
+            return [px, py, pz];
+        };
 
-        const bx = x2 - ux * actualHeadLen;
-        const by = y2 - uy * actualHeadLen;
-        const bz = z2 - uz * actualHeadLen;
+        const pts = [];
+        for (let i = 0; i <= segCount; i++) {
+            pts.push(samplePt(i / segCount));
+        }
 
-        const br = (borderR != null) ? borderR : r * 0.25;
-        const bg = (borderG != null) ? borderG : g * 0.25;
-        const bb = (borderB != null) ? borderB : b * 0.25;
+        const computeNormal = (pA, pB) => {
+            const sdx = pB[0] - pA[0], sdy = pB[1] - pA[1], sdz = pB[2] - pA[2];
+            const slen = Math.hypot(sdx, sdy, sdz);
+            if (slen < 0.0001) return [0, 1, 0];
+            const ux = sdx / slen, uy = sdy / slen, uz = sdz / slen;
+            const vcx = camX - (pA[0] + pB[0]) * 0.5;
+            const vcy = camY - (pA[1] + pB[1]) * 0.5;
+            const vcz = camZ - (pA[2] + pB[2]) * 0.5;
+            let nx = uy * vcz - uz * vcy;
+            let ny = uz * vcx - ux * vcz;
+            let nz = ux * vcy - uy * vcx;
+            const nLen = Math.hypot(nx, ny, nz);
+            if (nLen < 0.0001) return [0, 1, 0];
+            return [nx / nLen, ny / nLen, nz / nLen];
+        };
 
-        // 1. Darker Outer Outline Border (High Contrast vs Buildings & Terrain)
-        const outlineShaft = halfShaft * 1.65;
-        const outlineHeadW = actualHeadWidth * 1.45;
-        const outlineHeadL = actualHeadLen * 1.10;
-        const bxOut = x2 - ux * outlineHeadL;
-        const byOut = y2 - uy * outlineHeadL;
-        const bzOut = z2 - uz * outlineHeadL;
+        for (let i = 0; i < segCount; i++) {
+            if (isBleedout && (i % 2 === 1)) continue; // Subtle dashed trail for bleed-out
 
-        const os1x = x1 - nx * outlineShaft, os1y = y1 - ny * outlineShaft, os1z = z1 - nz * outlineShaft;
-        const os2x = x1 + nx * outlineShaft, os2y = y1 + ny * outlineShaft, os2z = z1 + nz * outlineShaft;
-        const os3x = bxOut - nx * outlineShaft, os3y = byOut - ny * outlineShaft, os3z = bzOut - nz * outlineShaft;
-        const os4x = bxOut + nx * outlineShaft, os4y = byOut + ny * outlineShaft, os4z = bzOut + nz * outlineShaft;
+            const t0 = i / segCount;
+            const t1 = (i + 1) / segCount;
+            const p0 = pts[i];
+            const p1 = pts[i + 1];
+            const n = computeNormal(p0, p1);
 
-        const oh1x = bxOut - nx * outlineHeadW, oh1y = byOut - ny * outlineHeadW, oh1z = bzOut - nz * outlineHeadW;
-        const oh2x = bxOut + nx * outlineHeadW, oh2y = byOut + ny * outlineHeadW, oh2z = bzOut + nz * outlineHeadW;
-        const oh3x = x2 + ux * 0.35, oh3y = y2 + uy * 0.35, oh3z = z2 + uz * 0.35;
+            const fadeMult = isBleedout ? 0.45 : 1.0;
+            const outA0 = (0.18 + 0.54 * t0) * fade * fadeMult;
+            const outA1 = (0.18 + 0.54 * t1) * fade * fadeMult;
+            const haloA0 = (0.24 + 0.68 * t0) * fade * fadeMult;
+            const haloA1 = (0.24 + 0.68 * t1) * fade * fadeMult;
+            const coreA0 = (0.35 + 0.65 * t0) * fade * fadeMult;
+            const coreA1 = (0.35 + 0.65 * t1) * fade * fadeMult;
 
-        this.addTri(os1x, os1y, os1z, os2x, os2y, os2z, os3x, os3y, os3z, br, bg, bb, a * 0.95);
-        this.addTri(os2x, os2y, os2z, os4x, os4y, os4z, os3x, os3y, os3z, br, bg, bb, a * 0.95);
-        this.addTri(oh1x, oh1y, oh1z, oh2x, oh2y, oh2z, oh3x, oh3y, oh3z, br, bg, bb, a * 0.95);
+            // Taper slightly from origin toward impact for sleek ballistic look
+            const wScale0 = 0.68 + 0.32 * t0;
+            const wScale1 = 0.68 + 0.32 * t1;
 
-        // 2. Inner Team Core Shaft & Head
-        const s1x = x1 - nx * halfShaft, s1y = y1 - ny * halfShaft, s1z = z1 - nz * halfShaft;
-        const s2x = x1 + nx * halfShaft, s2y = y1 + ny * halfShaft, s2z = z1 + nz * halfShaft;
-        const s3x = bx - nx * halfShaft, s3y = by - ny * halfShaft, s3z = bz - nz * halfShaft;
-        const s4x = bx + nx * halfShaft, s4y = by + ny * halfShaft, s4z = bz + nz * halfShaft;
+            this._addGradQuad(
+                p0[0], p0[1], p0[2], p1[0], p1[1], p1[2],
+                n[0], n[1], n[2], n[0], n[1], n[2],
+                outlineHalfW * wScale0, outlineHalfW * wScale1,
+                outR, outG, outB, outA0, outA1
+            );
+            this._addGradQuad(
+                p0[0], p0[1], p0[2], p1[0], p1[1], p1[2],
+                n[0], n[1], n[2], n[0], n[1], n[2],
+                haloHalfW * wScale0, haloHalfW * wScale1,
+                r, g, b, haloA0, haloA1
+            );
+            this._addGradQuad(
+                p0[0], p0[1], p0[2], p1[0], p1[1], p1[2],
+                n[0], n[1], n[2], n[0], n[1], n[2],
+                coreHalfW * wScale0, coreHalfW * wScale1,
+                coreR, coreG, coreB, coreA0, coreA1
+            );
+        }
 
-        const h1x = bx - nx * actualHeadWidth, h1y = by - ny * actualHeadWidth, h1z = bz - nz * actualHeadWidth;
-        const h2x = bx + nx * actualHeadWidth, h2y = by + ny * actualHeadWidth, h2z = bz + nz * actualHeadWidth;
-        const h3x = x2, h3y = y2, h3z = z2;
+        // Sleek small directional chevron near victim (never dwarfs the soldier)
+        if (!isBleedout && len > 2.0) {
+            const pPrev = pts[segCount - 1];
+            const pEnd = pts[segCount];
+            const sdx = pEnd[0] - pPrev[0], sdy = pEnd[1] - pPrev[1], sdz = pEnd[2] - pPrev[2];
+            const slen = Math.hypot(sdx, sdy, sdz);
+            if (slen > 0.01) {
+                const ux = sdx / slen, uy = sdy / slen, uz = sdz / slen;
+                const n = computeNormal(pPrev, pEnd);
+                const chevLen = Math.min(len * 0.16, baseHalfW * 7.5);
+                const chevW = baseHalfW * 3.4;
+                const bx = pEnd[0] - ux * chevLen;
+                const by = pEnd[1] - uy * chevLen;
+                const bz = pEnd[2] - uz * chevLen;
 
-        this.addTri(s1x, s1y, s1z, s2x, s2y, s2z, s3x, s3y, s3z, r, g, b, a);
-        this.addTri(s2x, s2y, s2z, s4x, s4y, s4z, s3x, s3y, s3z, r, g, b, a);
-        this.addTri(h1x, h1y, h1z, h2x, h2y, h2z, h3x, h3y, h3z, r, g, b, a);
+                this.addTri(
+                    bx - n[0] * chevW, by - n[1] * chevW, bz - n[2] * chevW,
+                    bx + n[0] * chevW, by + n[1] * chevW, bz + n[2] * chevW,
+                    pEnd[0], pEnd[1], pEnd[2],
+                    r, g, b, fade * 0.92
+                );
+                const innerW = chevW * 0.48;
+                const ibx = pEnd[0] - ux * (chevLen * 0.72);
+                const iby = pEnd[1] - uy * (chevLen * 0.72);
+                const ibz = pEnd[2] - uz * (chevLen * 0.72);
+                this.addTri(
+                    ibx - n[0] * innerW, iby - n[1] * innerW, ibz - n[2] * innerW,
+                    ibx + n[0] * innerW, iby + n[1] * innerW, ibz + n[2] * innerW,
+                    pEnd[0], pEnd[1], pEnd[2],
+                    coreR, coreG, coreB, fade * 0.98
+                );
+            }
+        }
+
+        // Compact camera-facing impact diamond at victim point
+        const vDist = Math.hypot(camX - x2, camY - y2, camZ - z2);
+        const impR = Math.max(0.14, Math.min(1.1, vDist * 0.0038)) * (isSelected ? 1.35 : 1.0);
+        const toCamX = camX - x2, toCamY = camY - y2, toCamZ = camZ - z2;
+        const tcLen = Math.hypot(toCamX, toCamY, toCamZ);
+        if (tcLen > 0.01) {
+            const fx = toCamX / tcLen, fy = toCamY / tcLen, fz = toCamZ / tcLen;
+            // Right vector = cross(up(0,1,0), f)
+            let rx = fz, ry = 0, rz = -fx;
+            let rLen = Math.hypot(rx, ry, rz);
+            if (rLen < 0.001) { rx = 1; ry = 0; rz = 0; rLen = 1; }
+            rx /= rLen; rz /= rLen;
+            // Up vector = cross(f, r)
+            const ux = fy * rz - fz * ry;
+            const uy = fz * rx - fx * rz;
+            const uz = fx * ry - fy * rx;
+
+            const outerAlpha = fade * (isSelected ? 0.9 : 0.75);
+            const innerR = impR * 0.45;
+            const ringPts = 8;
+            for (let s = 0; s < ringPts; s++) {
+                const a0 = (s / ringPts) * Math.PI * 2;
+                const a1 = ((s + 1) / ringPts) * Math.PI * 2;
+                const c0 = Math.cos(a0), s0 = Math.sin(a0);
+                const c1 = Math.cos(a1), s1 = Math.sin(a1);
+
+                const in0x = x2 + (rx * c0 + ux * s0) * innerR;
+                const in0y = y2 + (ry * c0 + uy * s0) * innerR;
+                const in0z = z2 + (rz * c0 + uz * s0) * innerR;
+                const out0x = x2 + (rx * c0 + ux * s0) * impR;
+                const out0y = y2 + (ry * c0 + uy * s0) * impR;
+                const out0z = z2 + (rz * c0 + uz * s0) * impR;
+
+                const in1x = x2 + (rx * c1 + ux * s1) * innerR;
+                const in1y = y2 + (ry * c1 + uy * s1) * innerR;
+                const in1z = z2 + (rz * c1 + uz * s1) * innerR;
+                const out1x = x2 + (rx * c1 + ux * s1) * impR;
+                const out1y = y2 + (ry * c1 + uy * s1) * impR;
+                const out1z = z2 + (rz * c1 + uz * s1) * impR;
+
+                this.addTri(in0x, in0y, in0z, out0x, out0y, out0z, in1x, in1y, in1z, r, g, b, outerAlpha);
+                this.addTri(out0x, out0y, out0z, out1x, out1y, out1z, in1x, in1y, in1z, r, g, b, outerAlpha);
+            }
+        }
+    }
+
+    _classifyKillStyle(weaponName) {
+        if (!weaponName) return "direct";
+        const w = String(weaponName).toLowerCase();
+        if (w === "killed" || w.includes("bleed")) return "bleedout";
+        if (
+            w.includes("mortar") ||
+            w.includes("arty") ||
+            w.includes("artillery") ||
+            w.includes("grenade") ||
+            w.includes("frag") ||
+            w.includes("m203") ||
+            w.includes("gp25") ||
+            w.includes("gp30") ||
+            w.includes("ugl") ||
+            w.includes("howitzer")
+        ) {
+            return "indirect";
+        }
+        return "direct";
     }
 
     draw() {
@@ -922,10 +1313,12 @@ class Lines3dRenderer extends Initializable {
         // 1. Air Vehicle Vertical Drop Lines (Hardware Depth Tested)
         // ---------------------------------------------------------------------
         const showAirHeight = (typeof options_DrawVehicleHeight !== "undefined") ? options_DrawVehicleHeight : true;
+        const showEmptyVehs = (typeof options_DrawEmptyVehicles !== "undefined") ? options_DrawEmptyVehicles : true;
         if (showAirHeight && typeof AllVehicles !== "undefined") {
             for (const vId in AllVehicles) {
                 const v = AllVehicles[vId];
                 if (!v || !v.isFlyingVehicle || v.isClimbingVehicle) continue;
+                if (!showEmptyVehs && (!v.Passengers || v.Passengers.size === 0)) continue;
 
                 let vx = (typeof v.getX === "function") ? v.getX() : v.X;
                 let vy = (typeof v._smoothY === "number" && !isNaN(v._smoothY)) ? v._smoothY : ((typeof v.getY === "function") ? v.getY() : (v.Y || 0));
@@ -981,97 +1374,58 @@ class Lines3dRenderer extends Initializable {
                     vy = Math.max(vy, heightmap.getHeightFromCoords(vx, vz) + 0.8);
                 }
 
-                // Team 1 (Red / OPFOR): Vivid Red core with dark crimson outline
-                // Team 2 (Blue / BLUFOR): Deep Royal Blue core with dark navy outline
+                // Team 1 (Deep Crimson) vs Team 2 (Deep Cobalt Blue) for strong readability on bright desert/snow maps
                 const isTeam1 = (atk.team === 1);
-                const r = isTeam1 ? 1.0 : 0.08;
-                const g = isTeam1 ? 0.16 : 0.42;
-                const b = isTeam1 ? 0.10 : 1.0;
+                const r = isTeam1 ? 0.92 : 0.05;
+                const g = isTeam1 ? 0.14 : 0.30;
+                const b = isTeam1 ? 0.12 : 0.90;
 
-                const borderR = isTeam1 ? 0.35 : 0.01;
-                const borderG = isTeam1 ? 0.02 : 0.08;
-                const borderB = isTeam1 ? 0.02 : 0.42;
+                const coreR = isTeam1 ? 1.00 : 0.36;
+                const coreG = isTeam1 ? 0.60 : 0.66;
+                const coreB = isTeam1 ? 0.50 : 1.00;
 
-                this.add3DArrow(ax, ay + 1.3, -az, vx, vy + 1.0, -vz, r, g, b, fade, camX, camY, camZ, 0.48, 1.40, 3.8, borderR, borderG, borderB);
+                const killStyle = this._classifyKillStyle(kill.Weapon);
+                this.add3DKillTracer(ax, ay + 1.35, -az, vx, vy + 1.05, -vz, r, g, b, coreR, coreG, coreB, fade, camX, camY, camZ, killStyle, false);
+            }
+        }
+
+        // 2a. Selected Kill Line in 3D (when a kill row is hovered or selected in Kill Feed)
+        if (typeof SelectedKill !== "undefined" && SelectedKill != SELECTED_NOTHING &&
+            typeof eventArrays !== "undefined" && eventArrays.kills && eventArrays.kills.events[SelectedKill]) {
+            const k = eventArrays.kills.events[SelectedKill];
+            const ax = Number(k.AttackerX), az = Number(k.AttackerY);
+            const vx = Number(k.VictimX), vz = Number(k.VictimY);
+            if (Number.isFinite(ax) && Number.isFinite(az) && Number.isFinite(vx) && Number.isFinite(vz)) {
+                let ay = Number.isFinite(Number(k.AttackerZ)) ? Number(k.AttackerZ) : 0;
+                let vy = Number.isFinite(Number(k.VictimZ)) ? Number(k.VictimZ) : 0;
+                if (typeof heightmap !== "undefined") {
+                    ay = Math.max(ay, heightmap.getHeightFromCoords(ax, az) + 0.8);
+                    vy = Math.max(vy, heightmap.getHeightFromCoords(vx, vz) + 0.8);
+                }
+                const pulse = 0.82 + 0.18 * Math.sin(performance.now() * 0.006);
+                const killStyle = this._classifyKillStyle(k.Weapon);
+                this.add3DKillTracer(ax, ay + 1.4, -az, vx, vy + 1.1, -vz, 0.98, 0.78, 0.22, 1.0, 0.97, 0.78, pulse, camX, camY, camZ, killStyle, true);
             }
         }
 
         const arrowTriCount = this.triVertexCount;
 
-        // ---------------------------------------------------------------------
-        // 2b. Authentic Sea / Ocean / River Water Plane (Depth Tested on Terrain)
-        // ---------------------------------------------------------------------
-        const activeMapKey = (typeof window.CurrentMapName !== "undefined" && window.CurrentMapName) 
-            ? window.CurrentMapName.toLowerCase() 
-            : ((typeof buildingHeightmap !== "undefined" && buildingHeightmap._mapKey) ? buildingHeightmap._mapKey.toLowerCase() : null);
-
-        if (activeMapKey && typeof PR_WATER_DATABASE !== "undefined" && PR_WATER_DATABASE[activeMapKey]) {
-            const wInfo = PR_WATER_DATABASE[activeMapKey];
-            if (wInfo.hasWater && wInfo.seaLevel > 0.0) {
-                const seaLevel = (typeof wInfo.seaLevel === "number") ? wInfo.seaLevel : 0.0;
-                const mapSize = (typeof heightmap !== "undefined" && heightmap.terrainSize) ? heightmap.terrainSize : 2048;
-                const halfS = Math.max(mapSize * 2.5, 5000);
-
-                const wr = (wInfo.color && wInfo.color[0] != null) ? wInfo.color[0] : 0.15;
-                const wg = (wInfo.color && wInfo.color[1] != null) ? wInfo.color[1] : 0.25;
-                const wb = (wInfo.color && wInfo.color[2] != null) ? wInfo.color[2] : 0.35;
-                const wa = 0.85; // Realistic translucent water surface
-
-                const x1 = -halfS, x2 = halfS;
-                const z1 = -halfS, z2 = halfS; // In game coords, OpenGL uses -z
-
-                // Top-facing quad (2 triangles)
-                this.addTri(x1, seaLevel, -z1, x2, seaLevel, -z1, x2, seaLevel, -z2, wr, wg, wb, wa);
-                this.addTri(x1, seaLevel, -z1, x2, seaLevel, -z2, x1, seaLevel, -z2, wr, wg, wb, wa);
-                // Bottom-facing quad for underwater camera angles (2 triangles)
-                this.addTri(x1, seaLevel, -z1, x2, seaLevel, -z2, x2, seaLevel, -z1, wr, wg, wb, wa);
-                this.addTri(x1, seaLevel, -z1, x1, seaLevel, -z2, x2, seaLevel, -z2, wr, wg, wb, wa);
-
-                // DOD (Combat Areas / Out of Bounds) Colored Water Overlays
-                const showDOD = (typeof options_DrawDOD !== "undefined") ? options_DrawDOD : true;
-                if (showDOD && typeof currentDODList !== "undefined" && currentDODList && currentDODList.length > 0) {
-                    const dodY = seaLevel + 0.04;
-                    for (let dIdx = 0; dIdx < currentDODList.length; dIdx++) {
-                        const CA = currentDODList[dIdx];
-                        if (!CA || CA.inverted === 1 || !CA.points || CA.points.length < 3) continue;
-
-                        let dodR = 0.5, dodG = 0.5, dodB = 0.5, dodA = 0.38;
-                        if (CA.team === 1) { // Blue Team
-                            dodR = 0.10; dodG = 0.35; dodB = 0.95; dodA = 0.42;
-                        } else if (CA.team === 2) { // Red Team
-                            dodR = 0.95; dodG = 0.15; dodB = 0.15; dodA = 0.42;
-                        } else { // Neutral / Out of Bounds
-                            dodR = 0.35; dodG = 0.35; dodB = 0.35; dodA = 0.38;
-                        }
-
-                        const pts = CA.points;
-                        const p0 = pts[0];
-                        for (let i = 1; i < pts.length - 1; i++) {
-                            const p1 = pts[i];
-                            const p2 = pts[i + 1];
-                            // Top facing tri
-                            this.addTri(p0[0], dodY, -p0[1], p1[0], dodY, -p1[1], p2[0], dodY, -p2[1], dodR, dodG, dodB, dodA);
-                            // Bottom facing tri (double-sided)
-                            this.addTri(p0[0], dodY, -p0[1], p2[0], dodY, -p2[1], p1[0], dodY, -p1[1], dodR, dodG, dodB, dodA);
-                        }
-                    }
-                }
-            }
-        }
+        // (3D water surface and concave DOD water overlays are rendered seamlessly by Water3dRenderer)
 
         // ---------------------------------------------------------------------
-        // 3. 3D Ground Rings for Orders & Spotted Tracking
+        // 3. 3D Ground Segmented Reticles for Orders & Spotted Tracking
         // ---------------------------------------------------------------------
         const showSpotted = (typeof options_DrawSpottedIndicators !== "undefined") ? options_DrawSpottedIndicators : false;
         if (showSpotted && typeof hud3d !== "undefined" && typeof hud3d.computeSpottedEntities === "function") {
             const spottedData = hud3d.computeSpottedEntities();
             if (spottedData) {
-                const pulseFactor = 0.5 + 0.5 * Math.sin(performance.now() / 200);
-                const pulseR = 0.70 + pulseFactor * 0.55;
-                const ringThickness = 0.22;
-                const alpha = 0.35 + (1.0 - pulseFactor) * 0.55;
+                const nowSec = performance.now() * 0.001;
+                const rotRad = nowSec * 0.28; // Calm, slow rotation (~22s/rev)
+                const pulseFactor = 0.5 + 0.5 * Math.sin(nowSec * 1.1); // Gentle slow breath (~5.7s cycle)
+                const alpha = 0.62 + pulseFactor * 0.20;
 
-                const r = 1.0, g = 0.08, b = 0.20;
+                // Sober tactical crimson (matches dark SPOTTED pill)
+                const r = 0.82, g = 0.28, b = 0.28;
 
                 for (const player of spottedData.players) {
                     let px = (typeof player.getX === "function") ? player.getX() : player.X;
@@ -1083,7 +1437,8 @@ class Lines3dRenderer extends Initializable {
                         py = Math.max(py, heightmap.getHeightFromCoords(px, pz));
                     }
 
-                    this.add3DGroundRing(px, py + 0.04, pz, pulseR, pulseR + ringThickness, r, g, b, alpha, 32);
+                    const pRad = 0.85 + pulseFactor * 0.16;
+                    this.add3DSpottedReticle(px, py + 0.05, pz, pRad, 0.14, r, g, b, alpha, rotRad);
                 }
 
                 for (const veh of spottedData.vehicles) {
@@ -1092,21 +1447,21 @@ class Lines3dRenderer extends Initializable {
                     let vz = (typeof veh.getZ === "function") ? veh.getZ() : veh.Z;
                     if (vx == null || vz == null) continue;
 
-                    const vPulseR = 2.2 + pulseFactor * 1.2;
-                    this.add3DGroundRing(vx, vy + 0.06, vz, vPulseR, vPulseR + 0.35, r, g, b, alpha, 36);
+                    const vRad = 2.6 + pulseFactor * 0.35;
+                    this.add3DSpottedReticle(vx, vy + 0.07, vz, vRad, 0.24, r, g, b, alpha, rotRad);
                 }
 
                 for (const fob of spottedData.fobs) {
                     let fx = fob.X, fz = fob.Z, fy = fob.Y || 0;
                     if (typeof heightmap !== "undefined") fy = Math.max(fy, heightmap.getHeightFromCoords(fx, fz));
-                    const fPulseR = 3.5 + pulseFactor * 1.5;
-                    this.add3DGroundRing(fx, fy + 0.06, fz, fPulseR, fPulseR + 0.40, r, g, b, alpha, 36);
+                    const fRad = 3.8 + pulseFactor * 0.45;
+                    this.add3DSpottedReticle(fx, fy + 0.07, fz, fRad, 0.28, r, g, b, alpha, rotRad);
                 }
             }
         }
 
         // ---------------------------------------------------------------------
-        // 4. Flag Capture Radii (Projected Flat on 3D Terrain)
+        // 4. Flag Capture Sectors (Perimeter + Inward Fade + Low Curtain)
         // ---------------------------------------------------------------------
         const showFlags = (typeof options_DrawFlagRadius !== "undefined") ? options_DrawFlagRadius : true;
         if (showFlags && typeof AllFlags !== "undefined") {
@@ -1114,13 +1469,11 @@ class Lines3dRenderer extends Initializable {
                 const f = AllFlags[fId];
                 if (!f || f.Radius == null || f.Radius <= 0) continue;
 
-                let r = 0.75, g = 0.75, b = 0.75, a = 0.40;
-                if (f.team === 1) { r = 1.0; g = 0.18; b = 0.10; a = 0.50; }
-                else if (f.team === 2) { r = 0.15; g = 0.55; b = 1.0; a = 0.50; }
+                let r = 0.72, g = 0.76, b = 0.78;
+                if (f.team === 1) { r = 0.92; g = 0.16; b = 0.12; }
+                else if (f.team === 2) { r = 0.08; g = 0.42; b = 0.96; }
 
-                const rad = f.Radius;
-                const bandW = Math.max(0.7, rad * 0.022);
-                this.add3DTerrainRing(f.X, f.Z, Math.max(0, rad - bandW), rad, r, g, b, a, 48);
+                this.add3DFlagSector(f.X, f.Z, f.Radius, r, g, b, 56);
             }
         }
 
@@ -1185,8 +1538,9 @@ class Lines3dRenderer extends Initializable {
                 if (currentRadiusM < 1.5 || opacity <= 0.01) continue;
 
                 const col = this.parseRgba(sw.color, opacity);
-                const bandW = Math.max(1.0, currentRadiusM * 0.025);
-                this.add3DTerrainRing(sw.x, sw.z, Math.max(0, currentRadiusM - bandW), currentRadiusM, col[0], col[1], col[2], opacity, 54);
+                const bandW = Math.max(0.65, Math.min(2.8, currentRadiusM * 0.015));
+                const fadeW = Math.min(currentRadiusM * 0.18, 18.0);
+                this.add3DSoftTerrainRing(sw.x, sw.z, currentRadiusM, bandW, fadeW, col[0], col[1], col[2], opacity, 56);
             }
         }
 
@@ -1202,9 +1556,10 @@ class Lines3dRenderer extends Initializable {
                     const px = (typeof p.getX === "function") ? p.getX() : p.X;
                     const pz = (typeof p.getZ === "function") ? p.getZ() : p.Z;
                     const flankRadius = (typeof getAdaptiveFlankRadius === "function") ? getAdaptiveFlankRadius() : 100;
-                    const bandW = Math.max(0.6, flankRadius * 0.015);
-                    // Purple ring on 3D terrain: rgba(128, 0, 128, 0.75)
-                    this.add3DTerrainRing(px, pz, Math.max(0, flankRadius - bandW), flankRadius, 0.65, 0.10, 0.85, 0.75, 54);
+                    const bandW = Math.max(0.45, Math.min(1.15, flankRadius * 0.011));
+                    const fadeW = Math.min(flankRadius * 0.08, 3.0);
+                    // Desaturated tactical violet dashed perimeter matching 2D
+                    this.add3DDashedTerrainRing(px, pz, flankRadius, bandW, 0.68, 0.45, 0.82, 0.58, 40, fadeW);
                 }
             }
         }
@@ -1485,13 +1840,14 @@ class Lines3dRenderer extends Initializable {
                             const px = (typeof p.getX === "function") ? p.getX() : p.X;
                             const pz = (typeof p.getZ === "function") ? p.getZ() : p.Z;
 
-                            // 2D Exact Colors: Sprint = Gold/Yellow, Walk/Crouch = Cyan
-                            let r = 0.0, g = 0.90, b = 1.0;
+                            // Refined tactical sound aura: Sprint = Warm Amber, Walk/Crouch = Muted Cyan
+                            let r = 0.22, g = 0.78, b = 0.88;
                             if (st.stance === "sprint") {
-                                r = 1.0; g = 0.78; b = 0.0;
+                                r = 0.92; g = 0.72; b = 0.24;
                             }
-                            const bandW = Math.max(0.35, p.ns_auraRadius * 0.035);
-                            this.add3DTerrainRing(px, pz, Math.max(0, p.ns_auraRadius - bandW), p.ns_auraRadius, r, g, b, p.ns_auraOpacity, 36);
+                            const bandW = Math.max(0.28, Math.min(0.85, p.ns_auraRadius * 0.02));
+                            const fadeW = Math.min(p.ns_auraRadius * 0.22, 4.5);
+                            this.add3DSoftTerrainRing(px, pz, p.ns_auraRadius, bandW, fadeW, r, g, b, p.ns_auraOpacity, 40);
                         }
                     } else if (typeof AllVehicles !== "undefined") {
                         const v = AllVehicles[p.vehicleid];
@@ -1633,6 +1989,63 @@ function getVehicleEyePos(v) {
             }
         }
 
+        // 7b. Active Squad Leader Order Vector Line in 3D (for selected player or selected squad)
+        {
+            let orderTeam = 0, orderSquad = 0;
+            let originX = null, originY = null, originZ = null;
+            if (selPlayer != -1 && selPlayer != SELECTED_NOTHING && typeof AllPlayers !== "undefined" && AllPlayers[selPlayer]) {
+                const sp = AllPlayers[selPlayer];
+                if (!sp.isJoining && sp.isAlive && sp.squad > 0 && sp.X != null && !isNaN(sp.X)) {
+                    orderTeam = sp.team;
+                    orderSquad = sp.squad;
+                    const pEye = getPlayerEyePos(sp);
+                    if (Number.isFinite(pEye.x) && Number.isFinite(pEye.y) && Number.isFinite(pEye.z)) {
+                        originX = pEye.x; originY = pEye.y - 0.5; originZ = pEye.z;
+                    }
+                }
+            } else if (typeof SelectedSquadTeam !== "undefined" && SelectedSquadTeam != SELECTED_NOTHING &&
+                       typeof SelectedSquadNumber !== "undefined" && SelectedSquadNumber > 0) {
+                orderTeam = SelectedSquadTeam;
+                orderSquad = SelectedSquadNumber;
+                if (typeof AllPlayers !== "undefined") {
+                    for (const pid in AllPlayers) {
+                        const mp = AllPlayers[pid];
+                        if (mp && !mp.isJoining && mp.isAlive && mp.team === orderTeam && mp.squad === orderSquad && mp.isSquadLeader && mp.X != null && !isNaN(mp.X)) {
+                            const pEye = getPlayerEyePos(mp);
+                            if (Number.isFinite(pEye.x) && Number.isFinite(pEye.y) && Number.isFinite(pEye.z)) {
+                                originX = pEye.x; originY = pEye.y - 0.5; originZ = pEye.z;
+                            }
+                            break;
+                        }
+                    }
+                }
+            }
+            if (orderTeam > 0 && orderSquad > 0 && typeof getOrderFromTeamSquad === "function") {
+                const ord = getOrderFromTeamSquad(orderTeam, orderSquad);
+                if (ord && ord.type !== 0 && Number.isFinite(ord.X) && Number.isFinite(ord.Z)) {
+                    const ordH = (typeof heightmap !== "undefined") ? heightmap.getHeightFromCoords(ord.X, ord.Z) + 1.0 : 1.0;
+                    // Sleek 8-arc tactical amber target marker + small center anchor
+                    this.add3DDashedTerrainRing(ord.X, ord.Z, 4.2, 0.52, 0.92, 0.56, 0.16, 0.86, 8, 1.2);
+                    this.add3DTerrainRing(ord.X, ord.Z, 0.35, 0.78, 0.92, 0.56, 0.16, 0.86, 16);
+                    if (originX !== null) {
+                        this.add3DDashedLine(originX, originY, -originZ, ord.X, ordH, -ord.Z, 0.92, 0.56, 0.16, 0.82, 4.0, 2.5);
+                    }
+                }
+            }
+        }
+
+        // 7c. 3D Highlight Area Rings (when clicking event coordinates in dialogs or timeline)
+        if (typeof highlights !== "undefined" && Array.isArray(highlights) && highlights.length > 0) {
+            for (let hi = 0; hi < highlights.length; hi++) {
+                const h = highlights[hi];
+                if (!h || !Number.isFinite(h.x) || !Number.isFinite(h.z) || !(h.fade > 0)) continue;
+                const radius = 5.0 + (1.0 - h.fade) * 26.0;
+                const fadeAlpha = Math.min(0.88, h.fade);
+                this.add3DSoftTerrainRing(h.x, h.z, radius, 0.72, Math.min(radius * 0.25, 4.5), 0.92, 0.34, 0.24, fadeAlpha, 36);
+                this.add3DDashedTerrainRing(h.x, h.z, 2.8, 0.48, 0.94, 0.76, 0.28, Math.min(0.92, h.fade), 4, 0);
+            }
+        }
+
         const totalTriCount = this.triVertexCount;
         const groundTriCount = totalTriCount - arrowTriCount;
 
@@ -1682,7 +2095,7 @@ function getVehicleEyePos(v) {
                 gl.drawArrays(gl.TRIANGLES, 0, arrowTriCount);
             }
 
-            // --- PASS 3: 3D Ground & Volumetric Geometry (Depth Tested on Roofs/Terrain with Blending) ---
+            // --- PASS 3: 3D Ground & Volumetric Overlays (Depth Tested on Roofs/Terrain/Water with Blending) ---
             if (groundTriCount > 0) {
                 gl.enable(gl.DEPTH_TEST);
                 gl.depthFunc(gl.LEQUAL);

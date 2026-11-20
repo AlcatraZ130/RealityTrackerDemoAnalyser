@@ -59,6 +59,8 @@ function MouseDown(event)
 
 function MouseMove(event)
 {
+	var container = document.getElementById("renderers");
+
 	if (MouseIsDown)
 	{
 		event.preventDefault();
@@ -66,7 +68,14 @@ function MouseMove(event)
 
 		if (is3DMode) {
 			renderer3d.mouseMove(pos.X - MouseLastPosX, pos.Y - MouseLastPosY);
+			if (container && container.style.cursor) container.style.cursor = "";
 		} else {
+			if (typeof options_CameraTracking !== "undefined" && options_CameraTracking) {
+				const dragDist = Math.hypot(pos.X - MouseDownPosX, pos.Y - MouseDownPosY);
+				if (dragDist > 12 && typeof toggleCameraTracking === "function") {
+					toggleCameraTracking(false);
+				}
+			}
 			CameraX = MouseDownCameraX + (pos.X - MouseDownPosX);
 			CameraY = MouseDownCameraY + (pos.Y - MouseDownPosY);
         }
@@ -76,6 +85,12 @@ function MouseMove(event)
 
 		clampCamera();
 		requestUpdate();
+	} else if (is3DMode && typeof hud3d !== "undefined" && hud3d.initialized && typeof hud3d.pickEntityAtScreenPos === "function") {
+		var hoverPos = activeRenderer.getMousePos(event);
+		var hoverHit = hud3d.pickEntityAtScreenPos(hoverPos.X, hoverPos.Y);
+		if (container) container.style.cursor = hoverHit ? "pointer" : "";
+	} else if (container && container.style.cursor) {
+		container.style.cursor = "";
 	}
 }
 
@@ -149,6 +164,15 @@ function Wheel(event)
 {
 	if (typeof is3DMode !== "undefined" && is3DMode && typeof renderer3d !== "undefined") {
 		if (event.preventDefault) event.preventDefault();
+		if (typeof keysDown !== "undefined" && keysDown.has(86)) {
+			if (event.deltaY !== 0) {
+				const currentTarget = (renderer3d.zoomTargetFov != null) ? renderer3d.zoomTargetFov : 12.0;
+				const zoomMultiplier = (event.deltaY < 0) ? 0.80 : 1.25;
+				renderer3d.zoomTargetFov = clamp(3.0, currentTarget * zoomMultiplier, 65.0);
+				requestUpdate();
+			}
+			return;
+		}
 		if (renderer3d.isTopDown) {
 			if (renderer3d.targetTopDownAltitude == null) {
 				renderer3d.targetTopDownAltitude = renderer3d.cameraPos[1];

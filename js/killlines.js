@@ -32,24 +32,24 @@ function killLine_ShouldKeep(Kill)
 
 function killLine_Draw(Kill)
 {
-	Context.save()
-
 	const Atk = AllPlayers[Kill.AttackerID]
 	const Vic = AllPlayers[Kill.VictimID]
 
 	if (Atk == null || Vic == null)
 		return
 
-	var Fade = 1 - (Tick_Current - Kill.tick) * FadeAmountPerTick
-	Context.globalAlpha = Math.max(Fade, 0)
-
-
 	var x1 = Atk.getCanvasX()
 	var y1 = Atk.getCanvasY()
 	var x2 = Vic.getCanvasX()
 	var y2 = Vic.getCanvasY()
-	drawArrow(x1, x2, y1, y2, Atk.team, Atk.squad)
+	if (!Number.isFinite(x1) || !Number.isFinite(y1) || !Number.isFinite(x2) || !Number.isFinite(y2))
+		return
 
+	Context.save()
+	var Fade = 1 - (Tick_Current - Kill.tick) * FadeAmountPerTick
+	Context.globalAlpha = Math.max(Fade, 0)
+
+	drawArrow(x1, x2, y1, y2, Atk.team, Atk.squad)
 
 	Context.restore()
 }
@@ -57,30 +57,35 @@ function killLine_Draw(Kill)
 // Draws from a "kill" object (using the global var SelectedKill), no fade
 function killLine_DrawSelected()
 {
-	Context.lineWidth = 5;
-	Context.beginPath()
 	var kill = eventArrays.kills.events[SelectedKill]
 	if (kill == null)
 		return
 
-	var Atk = AllPlayers[kill.Attacker]
 	var x1 = XtoCanvas(kill.AttackerX)
 	var y1 = YtoCanvas(kill.AttackerY)
 	var x2 = XtoCanvas(kill.VictimX)
 	var y2 = YtoCanvas(kill.VictimY)
+	if (!Number.isFinite(x1) || !Number.isFinite(y1) || !Number.isFinite(x2) || !Number.isFinite(y2))
+		return
 
+	Context.save()
+	Context.lineWidth = 5;
+	Context.beginPath()
 	drawArrow(x1, x2, y1, y2, kill.AttackerTeam, kill.AttackerSquad)
+	Context.restore()
 }
 
 
 
 function drawArrow(x1, x2, y1, y2, Team, Squad)
 {
-	Context.beginPath()
-	
 	const xdirection = x2 - x1
 	const ydirection = y2 - y1
 	const size = Math.sqrt(xdirection * xdirection + ydirection * ydirection)
+	if (!Number.isFinite(size) || size < 0.001)
+		return
+
+	Context.beginPath()
 	
 	const xnorm = xdirection / size
 	const ynorm = ydirection / size

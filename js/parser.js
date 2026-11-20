@@ -593,7 +593,7 @@ class VehicleObject extends InterpolatedGameObject
 
 		if (this.name in vehicleData) {
 			const data = vehicleData[this.name]
-			this.ns_mapImage = coloredIcons[data.MiniMapIcon] //Map Image is a must
+			this.ns_mapImage = coloredIcons[data.MiniMapIcon] || coloredIcons["mini_shp_light"] //Map Image is a must
 			if (data.MenuIcon != "")
 				this.ns_menuImage = icons[data.MenuIcon] //Menuimage is optional
 			this.ns_geomName = data.Geometry;
@@ -1092,8 +1092,46 @@ function getSquadName(team,squad)
 var TICKSPERSAVE = 100
 var LatestState = -1
 var isFastForwarding = false //Set to true to not do any UI updates when fast forwarding
+
+function getNearestSavedTickBefore(targetTick)
+{
+	const rounded = targetTick - (targetTick % TICKSPERSAVE)
+	if (rounded === 0 || (rounded in savedStates))
+		return rounded
+
+	let best = 0
+	for (var k in savedStates)
+	{
+		const tk = Number(k)
+		if (tk <= targetTick && tk > best)
+			best = tk
+	}
+	return best
+}
+
+function clearTransientTacticalState()
+{
+	if (typeof spottedPlayerEntryMap !== "undefined" && spottedPlayerEntryMap) spottedPlayerEntryMap.clear();
+	if (typeof spottedVehicleEntryMap !== "undefined" && spottedVehicleEntryMap) spottedVehicleEntryMap.clear();
+	if (typeof ns_activeShockwaves !== "undefined" && Array.isArray(ns_activeShockwaves)) ns_activeShockwaves.length = 0;
+	if (typeof flankChronometer !== "undefined" && flankChronometer && flankChronometer.state) {
+		flankChronometer.state.clear();
+		flankChronometer.lastTick = -1;
+	}
+	if (typeof ns_activeExplosions3D !== "undefined" && Array.isArray(ns_activeExplosions3D)) ns_activeExplosions3D.length = 0;
+	if (typeof ns_activeLaunchSmoke3D !== "undefined" && Array.isArray(ns_activeLaunchSmoke3D)) ns_activeLaunchSmoke3D.length = 0;
+	if (typeof ns_activeSmokeScreens3D !== "undefined" && Array.isArray(ns_activeSmokeScreens3D)) ns_activeSmokeScreens3D.length = 0;
+}
+
 function goTo(Tick_Target)
 {
+	Tick_Target = Number(Tick_Target)
+	if (isNaN(Tick_Target))
+		return
+
+	if (!window._suppressKillReplayCancel)
+		window._killReplayStopTick = null
+
 	// If its the same tick, do nothing 
 	if (Tick_Target == Tick_Current)
 		return
@@ -1118,19 +1156,20 @@ function goTo(Tick_Target)
 		{}
 
 		// Latest state is before target, load the latest to shortcut as much as possible 
-		else if (LatestState < Tick_Target)
+		else if (LatestState < Tick_Target && (LatestState in savedStates))
 			loadState(LatestState);
 		// Latest state is after target, load the one before the target 
 		else
 		{
-			const SavedTick = Tick_Target - (Tick_Target % TICKSPERSAVE)
-			loadState(SavedTick)
+			const SavedTick = getNearestSavedTickBefore(Tick_Target)
+			if (SavedTick > Tick_Current)
+				loadState(SavedTick)
 		}
 	}
 	// If its behind, load a state because we have it for sure (The only way to reach future ticks is to parse all the way to there at least once, which stores states) 
 	else
 	{
-		const SavedTick = Tick_Target - (Tick_Target % TICKSPERSAVE)
+		const SavedTick = getNearestSavedTickBefore(Tick_Target)
 		loadState(SavedTick)
 	}
 
@@ -1143,6 +1182,9 @@ function goTo(Tick_Target)
 	if (Tick_Current < Tick_Target) // If no updates are needed, the UI should be already updated from loading the state
 		Update() // Do the last update with isFastForwarding false to cause UI update 
 
+	if (typeof analyserTimeline !== "undefined")
+		analyserTimeline.draw()
+
 	requestUpdate();
 }
 
@@ -1153,10 +1195,16 @@ function loadState(SavedTick)
 {
 	playerHistory.invalidate()
 	if (typeof ordersHistory !== 'undefined') ordersHistory.invalidate()
-	if (SavedTick == 0)
+	clearTransientTacticalState()
+	if (SavedTick <= 0 || !(SavedTick in savedStates))
 	{
-		Reset()
-		return
+		const fallbackTick = (SavedTick > 0) ? getNearestSavedTickBefore(SavedTick) : 0
+		if (fallbackTick <= 0 || !(fallbackTick in savedStates))
+		{
+			Reset()
+			return
+		}
+		SavedTick = fallbackTick
 	}
 
 	const State = savedStates[SavedTick]
@@ -1230,6 +1278,7 @@ function Reset()
 {
 	playerHistory.invalidate()
 	if (typeof ordersHistory !== 'undefined') ordersHistory.invalidate()
+	clearTransientTacticalState()
 	AllPlayers = {}
 	AllVehicles = {}
 	AllFobs = {}
@@ -1301,7 +1350,7 @@ function Update()
 		messageHandlers[MessageType](FullMessage)
 
 		// Only break when message type is end tick or end round
-		if (MessageType == MESSAGETYPE.TICK || MESSAGETYPE == MessageType.ROUNDEND)
+		if (MessageType == MESSAGETYPE.TICK || MessageType == MESSAGETYPE.ROUNDEND)
 			break
 	}
 
@@ -1831,6 +1880,8 @@ $(() =>
 			vehicleID: vehicleID,
 			vehicleX: NaN,
 			vehicleY: NaN,
+			X: NaN,
+			Y: NaN,
 			vehicleTemplate: "",
 			vehicleTeam: 0,
 			destroyerName: "",
@@ -1850,6 +1901,8 @@ $(() =>
 		{
 			obj.vehicleX = vehicle.X
 			obj.vehicleY = vehicle.Z
+			obj.X = vehicle.X
+			obj.Y = vehicle.Z
 			obj.vehicleTemplate = vehicle.name
 			obj.vehicleTeam = vehicle.team
 		}
@@ -1874,7 +1927,7 @@ const CHATCHANNELS =
 	0x32 : "AdminAlert",
 	0x33 : "Server Message",
 	0x34 : "Server Team1 Message",
-	0x35 : "Server Team1 Message",
+	0x35 : "Server Team2 Message",
 }
 $(() => 
 {
@@ -2064,13 +2117,18 @@ function isVehicleContainer(VehicleID)
 
 function isFlyingVehicle(vehicleName)
 {
-	return vehicleName.includes("_the_") ||
-		vehicleName.includes("_ahe_") ||
-		vehicleName.includes("_jet_") ||
-		vehicleName.startsWith("spectator")
+	const name = (vehicleName || "").toLowerCase();
+	return name.includes("_the_") ||
+		name.includes("_ahe_") ||
+		name.includes("_jet_") ||
+		name.startsWith("spectator") ||
+		isUAVVehicle(name);
 }
 function isUAVVehicle(vehicleName) {
-	return vehicleName.includes("uav_") 
+	const name = (vehicleName || "").toLowerCase();
+	return name.includes("uav_") ||
+		name.includes("_uav") ||
+		name.includes("init_air");
 }
 
 

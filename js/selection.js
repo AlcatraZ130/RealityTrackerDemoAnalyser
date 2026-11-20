@@ -68,7 +68,7 @@ function selection_selectObjectSquad(object) {
 	{
 		if (object instanceof PlayerObject)
 			selection_SelectPlayersSquad(object.id);
-		else if (object instanceof ProjObject)
+		else if (object instanceof ProjObject && object.player != null)
 			selection_SelectPlayersSquad(object.player.id);
 	}
 	if (typeof buildingHeightmap !== "undefined") buildingHeightmap.setSelectedObb(null);
@@ -150,6 +150,7 @@ function selection_onClick()
 function selection_SelectVehicle(i)
 {
 	if (i == SELECTED_NOTHING || !(i in AllVehicles)) {
+		playerRow_PlayerDeselectAll();
 		if (SelectedVehicle != SELECTED_NOTHING && (SelectedVehicle in vehicleTables)) {
 			vehicleTables[SelectedVehicle].classList.remove("vehicleTable-selected");
 		}
@@ -163,8 +164,13 @@ function selection_SelectVehicle(i)
 		selection_SelectPlayer(SELECTED_NOTHING);
 	}
 
+	playerRow_PlayerDeselectAll();
 	SelectedVehicle = i;
 	const v = AllVehicles[i];
+
+	for (var player in AllPlayers) {
+		selection_CheckIfPlayerInSelectedVehicle(player);
+	}
 
 	if (SelectedVehicle in vehicleTables) {
 		vehicleTables[SelectedVehicle].classList.add("vehicleTable-selected");
@@ -217,10 +223,14 @@ function selection_SelectSquad(Team, Squad)
 	// Select new squad
 	else
 	{
-		$("#Squad" + Team + Squad)[0].classList.add("scoreboard-squad-table-selected")
+		const sqTable = $("#Squad" + Team + Squad)[0];
+		if (sqTable) sqTable.classList.add("scoreboard-squad-table-selected")
 
 		SelectedSquadTeam = Team
 		SelectedSquadNumber = Squad
+	}
+	if (typeof analyserTimeline !== "undefined" && typeof analyserTimeline.draw === "function") {
+		analyserTimeline.draw();
 	}
 	// Redraw map to color the squad
 	requestUpdate();
@@ -232,7 +242,7 @@ function selection_DeselectCurrent()
 	selection_SelectPlayer(SELECTED_NOTHING);
 }
 
-function copyPlayerHash(e, hashStr)
+function copyPlayerHash(e, hashStr, btnEl)
 {
 	if (e) e.stopPropagation();
 	if (!hashStr) return;
@@ -251,12 +261,27 @@ function copyPlayerHash(e, hashStr)
 	}
 
 	const target = e ? (e.currentTarget || e.target) : null;
-	if (target) {
+	if (target && target.tagName !== "BUTTON") {
 		const range = document.createRange();
 		range.selectNodeContents(target);
 		const sel = window.getSelection();
 		sel.removeAllRanges();
 		sel.addRange(range);
+	}
+
+	const feedbackBtn = btnEl || document.getElementById("playerSelectionCopyHashBtn");
+	if (feedbackBtn) {
+		const origText = feedbackBtn.dataset.origText || feedbackBtn.textContent;
+		feedbackBtn.dataset.origText = origText;
+		feedbackBtn.textContent = "Copied";
+		feedbackBtn.style.borderColor = "#4e9a6a";
+		feedbackBtn.style.color = "#b7e4c7";
+		clearTimeout(feedbackBtn._copyTimer);
+		feedbackBtn._copyTimer = setTimeout(() => {
+			feedbackBtn.textContent = origText;
+			feedbackBtn.style.borderColor = "";
+			feedbackBtn.style.color = "";
+		}, 1200);
 	}
 }
 
@@ -308,6 +333,26 @@ function selection_UpdateInformationBox()
 		spdDiv.style.cssText = "margin-top: 4px;";
 		div.appendChild(spdDiv);
 
+		if (SelectedPlayer != SELECTED_NOTHING && typeof AllPlayers !== "undefined" && AllPlayers[SelectedPlayer]) {
+			const sp = AllPlayers[SelectedPlayer];
+			const safeHash = sp.hash ? escapeHtml(sp.hash) : "";
+			const hashRow = document.createElement("div");
+			hashRow.style.cssText = "margin-top: 4px; font-size: 11px;";
+			hashRow.innerHTML = safeHash
+				? `Hash: <span id="playerSelectionHashVal" onclick="copyPlayerHash(event, '${safeHash}')" style="cursor: copy; user-select: all; font-family: monospace; font-size: 10.5px; color: #d8e6e4;" title="Click to copy hash">${safeHash}</span>`
+				: `Hash: <span style="font-family: monospace; font-size: 10.5px; color: #8fa3a1;" title="This demo file does not include player hashes">N/A</span>`;
+			div.appendChild(hashRow);
+
+			const vehActions = document.createElement("div");
+			vehActions.style.cssText = "margin-top: 5px; display: flex; gap: 4px;";
+			const isFollowing = (typeof options_CameraTracking !== "undefined" && options_CameraTracking);
+			vehActions.innerHTML = `
+				<button type="button" class="hud-mini-btn" onclick="event.stopPropagation(); if (typeof toggleCameraTracking === 'function') { toggleCameraTracking(); selection_UpdateInformationBox(); }" style="padding: 2px 6px; font-size: 10px; ${isFollowing ? 'background:#3a5250; color:#fff; border-color:#8fa3a1;' : ''}">${isFollowing ? 'Following [T]' : 'Follow [T]'}</button>
+				<button type="button" id="playerSelectionCopyHashBtn" class="hud-mini-btn" ${safeHash ? `onclick="copyPlayerHash(event, '${safeHash}', this)" title="Copy player hash"` : `disabled style="padding: 2px 6px; font-size: 10px; opacity: 0.45; cursor: not-allowed;" title="No hash in this demo"`} ${safeHash ? `style="padding: 2px 6px; font-size: 10px;"` : ""}>Copy Hash</button>
+			`;
+			div.appendChild(vehActions);
+		}
+
 		updateSelectionSpeedAcousticLabel();
 
 		if (v.team == 1)
@@ -346,21 +391,68 @@ function selection_UpdateInformationBox()
 		} else {
 			div.innerHTML += "<br><b>" + escapeHtml(p.name) + "</b>";
 		}
-		const imgNode = p.ns_kitImage.cloneNode(false);
-		imgNode.width = 16;imgNode.height = 16;
-		imgNode.style.verticalAlign = "text-bottom";
-		imgNode.style.marginLeft = "3px";
-		div.appendChild(imgNode)
-		div.innerHTML += "<br>Height: " + p.Y	
-		if (p.health > 0) 
-			div.innerHTML += "<br>Health: " + p.health
-		if (p.hash)
-			div.innerHTML += `<br>Hash: <span id="playerSelectionHashVal" onclick="copyPlayerHash(event, '${escapeHtml(p.hash)}')" style="cursor: copy; user-select: all;" title="Click to copy hash">${escapeHtml(p.hash)}</span>`
+		if (p.ns_kitImage) {
+			const imgNode = p.ns_kitImage.cloneNode(false);
+			imgNode.width = 16; imgNode.height = 16;
+			imgNode.style.verticalAlign = "text-bottom";
+			imgNode.style.marginLeft = "3px";
+			div.appendChild(imgNode);
+		}
+		if (p.kit) {
+			const readableKit = (typeof kitNameToReadable === "function") ? kitNameToReadable(p.kit) : p.kit;
+			if (readableKit) {
+				div.innerHTML += ` <span style="font-size:11px; color:#cfd8d7;">(${escapeHtml(readableKit)})</span>`;
+			}
+		}
+		if (p.vehicleid >= 0 && typeof AllVehicles !== "undefined" && AllVehicles[p.vehicleid]) {
+			const veh = AllVehicles[p.vehicleid];
+			let seatName = p.vehicleSeatName || "";
+			if (veh && veh.name && seatName.startsWith(veh.name)) {
+				seatName = seatName.substring(veh.name.length);
+				if (seatName.startsWith("_")) seatName = seatName.substring(1);
+			}
+			if (seatName.length > 0) {
+				seatName = seatName.charAt(0).toUpperCase() + seatName.substring(1);
+			} else {
+				seatName = p.vehicleSlot === 0 ? "Driver" : (p.vehicleSlot === 1 ? "Gunner" : "Passenger");
+			}
+			const vHud = (veh.name in vehicleData && vehicleData[veh.name].HudName) ? vehicleData[veh.name].HudName : veh.name;
+			div.innerHTML += `<br><span style="font-size:11px; color:#d2dedc;">Vehicle: ${escapeHtml(vHud)} [${escapeHtml(seatName)}]</span>`;
+		}
+
+		const killsVal = p.kills != null ? p.kills : 0;
+		const deathsVal = p.deaths != null ? p.deaths : 0;
+		const scoreVal = p.score != null ? p.score : 0;
+		const twVal = p. scoreTW != null ? p.scoreTW : null;
+		div.innerHTML += `<br><span style="font-size:11px; color:#d2dedc;">K/D: <b>${killsVal}/${deathsVal}</b> | Score: <b>${scoreVal}</b>${twVal != null ? ` (TW: ${twVal})` : ""}</span>`;
+
+		if (p.isAlive) {
+			div.innerHTML += "<br>Height: " + Math.round(p.Y || 0) + "m";
+			if (p.health > 0)
+				div.innerHTML += " | Health: " + p.health;
+		} else {
+			div.innerHTML += `<br><span style="color:#ff8a80; font-weight:bold;">Status: Dead / Down</span>`;
+		}
+		const safeHash = p.hash ? escapeHtml(p.hash) : "";
+		if (safeHash) {
+			div.innerHTML += `<br><span style="font-size:11px;">Hash: <span id="playerSelectionHashVal" onclick="copyPlayerHash(event, '${safeHash}')" style="cursor: copy; user-select: all; font-family: monospace; font-size: 10.5px; color: #d8e6e4;" title="Click to copy hash">${safeHash}</span></span>`;
+		} else {
+			div.innerHTML += `<br><span style="font-size:11px;">Hash: <span style="font-family: monospace; font-size: 10.5px; color: #8fa3a1;" title="This demo file does not include player hashes">N/A</span></span>`;
+		}
 
 		const spdDiv = document.createElement("div");
 		spdDiv.id = "selection_SpeedAcousticContainer";
-		spdDiv.style.cssText = "margin-top: 0px;";
+		spdDiv.style.cssText = "margin-top: 2px;";
 		div.appendChild(spdDiv);
+
+		const actionsDiv = document.createElement("div");
+		actionsDiv.style.cssText = "margin-top: 5px; display: flex; gap: 4px;";
+		const isFollowing = (typeof options_CameraTracking !== "undefined" && options_CameraTracking);
+		actionsDiv.innerHTML = `
+			<button type="button" class="hud-mini-btn" onclick="event.stopPropagation(); if (typeof toggleCameraTracking === 'function') { toggleCameraTracking(); selection_UpdateInformationBox(); }" style="padding: 2px 6px; font-size: 10px; ${isFollowing ? 'background:#3a5250; color:#fff; border-color:#8fa3a1;' : ''}">${isFollowing ? 'Following [T]' : 'Follow [T]'}</button>
+			<button type="button" id="playerSelectionCopyHashBtn" class="hud-mini-btn" ${safeHash ? `onclick="copyPlayerHash(event, '${safeHash}', this)" style="padding: 2px 6px; font-size: 10px;" title="Copy player hash"` : `disabled style="padding: 2px 6px; font-size: 10px; opacity: 0.45; cursor: not-allowed;" title="No hash in this demo"`}>Copy Hash</button>
+		`;
+		div.appendChild(actionsDiv);
 
 		updateSelectionSpeedAcousticLabel();
 
@@ -378,7 +470,7 @@ function selection_UpdateInformationBox()
 		div.innerHTML = `
 			<div style="font-size: 11px; line-height: 1.4; color: #fff; padding: 2px 0;">
 				<div style="font-weight: bold; color: #fbbf24; font-size: 12px; margin-bottom: 3px; word-break: break-all;">
-					🏛️ ${escapeHtml(b.name || 'Building')}
+					${escapeHtml(b.name || 'Building')}
 				</div>
 				<div style="color: #94a3b8; font-size: 10px; margin-bottom: 5px;">
 					Type: <span style="color: #38bdf8;">${typeStr}</span>

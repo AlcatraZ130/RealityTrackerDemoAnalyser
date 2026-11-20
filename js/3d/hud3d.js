@@ -14,6 +14,9 @@ class Hud3d extends Initializable {
     ctx = null;
     initialized = false;
     dataReady = true;
+    hitboxes = [];
+    _lastDrawTime = 0;
+    _lastTick = null;
 
     constructor() {
         super();
@@ -96,6 +99,16 @@ class Hud3d extends Initializable {
 
         const ctx = this.ctx;
         ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+        this.hitboxes = [];
+
+        const nowMs = performance.now();
+        const dt = (this._lastDrawTime > 0) ? Math.min(0.1, Math.max(0.001, (nowMs - this._lastDrawTime) / 1000.0)) : 0.016;
+        this._lastDrawTime = nowMs;
+
+        const curTick = (typeof Tick_Current !== "undefined") ? Tick_Current : null;
+        const tickDelta = (this._lastTick != null && curTick != null) ? Math.abs(curTick - this._lastTick) : 0;
+        const forceSnap = (typeof isFastForwarding !== "undefined" && isFastForwarding) || (tickDelta > 8);
+        let anyIconMoving = false;
 
         const uiScale = (typeof options_canvasScale !== "undefined") ? Math.max(0.4, Number(options_canvasScale)) : 1.0;
         const showPlayerHealth = (typeof options_health_players !== "undefined" && options_health_players) || (typeof HealthButtonDown !== "undefined" && HealthButtonDown);
@@ -103,6 +116,7 @@ class Hud3d extends Initializable {
         const showKitIcons = (typeof options_DrawKitIcons !== "undefined") ? options_DrawKitIcons : true;
         const showAirHeight = (typeof options_DrawVehicleHeight !== "undefined") ? options_DrawVehicleHeight : true;
         const showSpotted = (typeof options_DrawSpottedIndicators !== "undefined") ? options_DrawSpottedIndicators : false;
+        const spottedData = showSpotted ? this.computeSpottedEntities() : null;
 
         // ---------------------------------------------------------------------
         // 1. Render Floating Player HUD Elements (Health, Kits, Squad Leader Star)
@@ -121,19 +135,40 @@ class Hud3d extends Initializable {
                 if (px == null || isNaN(px) || pz == null || isNaN(pz)) continue;
 
                 let gh = (typeof heightmap !== "undefined") ? heightmap.getHeightFromCoords(px, pz) : 0;
-                const floorY = Math.max(gh, py - 0.85);
-                const relY = py - gh;
+                let supportY = gh;
+                if (typeof buildingHeightmap !== "undefined" && buildingHeightmap.initialized && typeof buildingHeightmap.getSupportSurfaceY === "function") {
+                    supportY = buildingHeightmap.getSupportSurfaceY(px, py, pz, gh);
+                }
+                const relY = py - supportY;
                 const spdKmh = (typeof getEntitySpeedKmh === "function") ? getEntitySpeedKmh(p) : 0;
 
-                let headElevation = 1.80; // Standing: sits neatly right above helmet (floorY + 1.80m, helmet top is at 1.58m)
-                if (spdKmh < 3.0 && relY <= 0.25) {
-                    headElevation = 0.65; // Prone: surface + 0.65m (prone mesh top is at 0.47m)
-                } else if (relY <= 0.65) {
-                    headElevation = 1.25; // Crouch: surface + 1.25m (crouch mesh top is at 1.05m)
+                let stance = "stand";
+                if (spdKmh >= 6.0) {
+                    stance = "stand";
+                } else if (spdKmh >= 1.8) {
+                    stance = (relY <= 0.65) ? "crouch" : "stand";
+                } else {
+                    if (relY <= 0.25) {
+                        stance = "prone";
+                    } else if (relY <= 0.65) {
+                        stance = "crouch";
+                    } else {
+                        stance = "stand";
+                    }
                 }
 
+                const stancePelvisOffset = (stance === "prone") ? 0.15 : ((stance === "crouch") ? 0.50 : 0.85);
+                const floorY = Math.max(supportY, py - stancePelvisOffset);
+                const headElevation = (stance === "prone") ? 0.80 : ((stance === "crouch") ? 1.30 : 1.80);
+
+                // Smooth world-space "Follow" motion (eliminates sudden crouch/step popping without camera-pan lag)
+                const reappeared = (curTick != null && p._hudTick != null && Math.abs(curTick - p._hudTick) > 3);
+                const smoothPos = this._getSmoothedWorldPos(p, px, floorY + headElevation, pz, dt, forceSnap || reappeared);
+                if (curTick != null) p._hudTick = curTick;
+                if (!smoothPos.settled) anyIconMoving = true;
+
                 // Head screen position with dynamic stance awareness
-                const headProj = this.worldToScreen(px, floorY + headElevation, pz);
+                const headProj = this.worldToScreen(smoothPos.x, smoothPos.y, smoothPos.z);
                 if (!headProj) continue;
 
                 // Perspective distance scaling: close = ~1.1x, far (200m+) = ~0.55x
@@ -208,18 +243,51 @@ class Hud3d extends Initializable {
                     ctx.restore();
 
                     currentOffsetY = badgeY - badgeRadius;
+
+                    // Clickable screen hitbox on player kit badge
+                    this.hitboxes.push({
+                        entity: p,
+                        x: badgeX,
+                        y: badgeY,
+                        r: Math.max(12, badgeRadius + 3),
+                        dist: headProj.dist
+                    });
+                } else {
+                    // Fallback hitbox above soldier head when kit icons are disabled
+                    this.hitboxes.push({
+                        entity: p,
+                        x: headProj.x,
+                        y: currentOffsetY - (10 * finalScale),
+                        r: Math.max(11, 10 * finalScale),
+                        dist: headProj.dist
+                    });
                 }
 
-                // C. SPOTTED Marker & Countdown
-                if (showSpotted && p.spottedUntil && p.spottedUntil > (typeof Tick_Current !== "undefined" ? Tick_Current : 0)) {
-                    const remainingSec = Math.max(0, Math.ceil((p.spottedUntil - Tick_Current) / 3.1));
-                    ctx.fillStyle = "#ff2222";
-                    ctx.strokeStyle = "#000000";
-                    ctx.lineWidth = Math.max(2, 2.5 * finalScale);
-                    ctx.font = `bold ${Math.round(11 * finalScale)}px Arial, sans-serif`;
+                // C. SPOTTED Marker (compact dark tactical pill)
+                if (showSpotted && spottedData && spottedData.players && spottedData.players.has(p)) {
+                    ctx.save();
+                    const fontSize = Math.max(7, Math.round(8.5 * finalScale));
+                    ctx.font = `bold ${fontSize}px Arial, sans-serif`;
+                    const label = "SPOTTED";
+                    const tw = ctx.measureText(label).width;
+                    const padX = Math.max(3, Math.round(4 * finalScale));
+                    const pillW = tw + padX * 2;
+                    const pillH = Math.max(10, Math.round(12 * finalScale));
+                    const pillX = Math.round(headProj.x - pillW * 0.5);
+                    const pillY = Math.round(currentOffsetY - pillH - (2 * finalScale));
+
+                    ctx.fillStyle = "rgba(23, 35, 34, 0.88)";
+                    ctx.fillRect(pillX, pillY, pillW, pillH);
+                    ctx.strokeStyle = "#c94a4a";
+                    ctx.lineWidth = 1;
+                    ctx.strokeRect(pillX + 0.5, pillY + 0.5, pillW - 1, pillH - 1);
+
+                    ctx.fillStyle = "#f2b8b8";
                     ctx.textAlign = "center";
-                    ctx.strokeText(`SPOTTED (${remainingSec}s)`, headProj.x, currentOffsetY - (4 * finalScale));
-                    ctx.fillText(`SPOTTED (${remainingSec}s)`, headProj.x, currentOffsetY - (4 * finalScale));
+                    ctx.textBaseline = "middle";
+                    ctx.fillText(label, Math.round(headProj.x), Math.round(pillY + pillH * 0.5));
+                    ctx.restore();
+                    currentOffsetY = pillY;
                 }
 
                 // D. BVR Target Distance, Focus Timer & Target Ring (Exact 2D Fidelity)
@@ -279,32 +347,45 @@ class Hud3d extends Initializable {
                             const elapsedSeconds = elapsedTicks * dt;
 
                             const timeText = elapsedSeconds.toFixed(1) + "s";
-                            const isTargeted = !!(s.laserTick || s.enterConeTick);
                             const isDead = !p.isAlive || !!s.deathTick;
+                            const isLaser = !!s.laserTick;
+                            const isCone = !!s.enterConeTick;
 
-                            let textColor = isDead ? "#999999" : (isTargeted ? "#ff2244" : "#ffffff");
-                            let bgColor = isDead ? "rgba(40, 40, 40, 0.75)" : (isTargeted ? "rgba(180, 0, 30, 0.85)" : "rgba(80, 0, 120, 0.80)");
-                            let borderColor = isDead ? "#555555" : (isTargeted ? "#ff4466" : "#aa33ee");
+                            let textColor = "#ddd2ec";
+                            let bgColor = "rgba(23, 35, 34, 0.88)";
+                            let borderColor = "#8c6bb1";
+                            if (isDead) {
+                                textColor = "#9aa6a5";
+                                bgColor = "rgba(26, 28, 30, 0.82)";
+                                borderColor = "#5c6665";
+                            } else if (isLaser) {
+                                textColor = "#f2b8b8";
+                                borderColor = "#c94a4a";
+                            } else if (isCone) {
+                                textColor = "#f3d9a4";
+                                borderColor = "#d49b3e";
+                            }
 
                             ctx.save();
-                            ctx.font = `bold ${Math.round(11 * finalScale)}px Arial, sans-serif`;
+                            const fontPx = Math.max(8, Math.round(9.5 * finalScale));
+                            ctx.font = `bold ${fontPx}px Arial, sans-serif`;
                             const textWidth = ctx.measureText(timeText).width;
-                            const padX = Math.round(5 * finalScale);
-                            const badgeW = textWidth + padX * 2;
-                            const badgeH = Math.round(15 * finalScale);
+                            const padX = Math.max(4, Math.round(4.5 * finalScale));
+                            const badgeW = Math.round(textWidth + padX * 2);
+                            const badgeH = Math.max(12, Math.round(13.5 * finalScale));
                             const badgeX = Math.round(headProj.x - badgeW * 0.5);
-                            const badgeY = Math.round(currentOffsetY - badgeH - (2 * finalScale));
+                            const badgeY = Math.round(currentOffsetY - badgeH - Math.max(2, Math.round(2.5 * finalScale)));
 
                             ctx.fillStyle = bgColor;
                             ctx.fillRect(badgeX, badgeY, badgeW, badgeH);
                             ctx.strokeStyle = borderColor;
-                            ctx.lineWidth = Math.max(1, 1.2 * finalScale);
-                            ctx.strokeRect(badgeX, badgeY, badgeW, badgeH);
+                            ctx.lineWidth = 1;
+                            ctx.strokeRect(badgeX + 0.5, badgeY + 0.5, badgeW - 1, badgeH - 1);
 
                             ctx.fillStyle = textColor;
                             ctx.textAlign = "center";
                             ctx.textBaseline = "middle";
-                            ctx.fillText(timeText, Math.round(headProj.x), Math.round(badgeY + badgeH * 0.5));
+                            ctx.fillText(timeText, Math.round(headProj.x), Math.round(badgeY + badgeH * 0.5) + 0.5);
                             ctx.restore();
 
                             currentOffsetY = badgeY;
@@ -336,8 +417,14 @@ class Hud3d extends Initializable {
                     if (!v.isFlyingVehicle) vy = Math.max(vy, groundH + 0.5);
                 }
 
+                // Smooth world-space "Follow" motion for vehicle HUD icon
+                const reappeared = (curTick != null && v._hudTick != null && Math.abs(curTick - v._hudTick) > 3);
+                const smoothVehPos = this._getSmoothedWorldPos(v, vx, vy + 2.4, vz, dt, forceSnap || reappeared);
+                if (curTick != null) v._hudTick = curTick;
+                if (!smoothVehPos.settled) anyIconMoving = true;
+
                 // Chassis top screen position
-                const vehProj = this.worldToScreen(vx, vy + 2.4, vz);
+                const vehProj = this.worldToScreen(smoothVehPos.x, smoothVehPos.y, smoothVehPos.z);
                 if (!vehProj) continue;
 
                 const distanceScale = Math.max(0.5, Math.min(1.15, 90.0 / Math.max(20.0, vehProj.dist)));
@@ -369,6 +456,7 @@ class Hud3d extends Initializable {
                 }
 
                 // B. Vehicle Icon (Floating colored vehicle sprite in 3D HUD without circle backdrop)
+                let vehHitboxAdded = false;
                 if (showKitIcons && v.ns_mapImage) {
                     let color = 0;
                     if (typeof SelectedVehicle !== "undefined" && (vId == SelectedVehicle || v.id == SelectedVehicle)) {
@@ -394,8 +482,27 @@ class Hud3d extends Initializable {
                         ctx.drawImage(iconImg, iconX, iconY, iconSize, iconSize);
                         ctx.restore();
 
+                        // Clickable screen hitbox on vehicle icon
+                        this.hitboxes.push({
+                            entity: v,
+                            x: iconX + iconSize * 0.5,
+                            y: iconY + iconSize * 0.5,
+                            r: Math.max(14, iconSize * 0.5 + 4),
+                            dist: vehProj.dist
+                        });
+                        vehHitboxAdded = true;
+
                         currentOffsetY = iconY;
                     }
+                }
+                if (!vehHitboxAdded) {
+                    this.hitboxes.push({
+                        entity: v,
+                        x: vehProj.x,
+                        y: currentOffsetY - (12 * finalScale),
+                        r: Math.max(14, 14 * finalScale),
+                        dist: vehProj.dist
+                    });
                 }
 
                 // C. Air Vehicle Altitude Badge (+145m)
@@ -413,6 +520,33 @@ class Hud3d extends Initializable {
 
                     currentOffsetY -= Math.round(12 * finalScale);
                 }
+
+                // D. Vehicle SPOTTED Marker (compact dark tactical pill)
+                if (showSpotted && spottedData && spottedData.vehicles && spottedData.vehicles.has(v)) {
+                    ctx.save();
+                    const fontSize = Math.max(7, Math.round(8.5 * finalScale));
+                    ctx.font = `bold ${fontSize}px Arial, sans-serif`;
+                    const label = "SPOTTED";
+                    const tw = ctx.measureText(label).width;
+                    const padX = Math.max(3, Math.round(4 * finalScale));
+                    const pillW = tw + padX * 2;
+                    const pillH = Math.max(10, Math.round(12 * finalScale));
+                    const pillX = Math.round(vehProj.x - pillW * 0.5);
+                    const pillY = Math.round(currentOffsetY - pillH - (2 * finalScale));
+
+                    ctx.fillStyle = "rgba(23, 35, 34, 0.88)";
+                    ctx.fillRect(pillX, pillY, pillW, pillH);
+                    ctx.strokeStyle = "#c94a4a";
+                    ctx.lineWidth = 1;
+                    ctx.strokeRect(pillX + 0.5, pillY + 0.5, pillW - 1, pillH - 1);
+
+                    ctx.fillStyle = "#f2b8b8";
+                    ctx.textAlign = "center";
+                    ctx.textBaseline = "middle";
+                    ctx.fillText(label, Math.round(vehProj.x), Math.round(pillY + pillH * 0.5));
+                    ctx.restore();
+                    currentOffsetY = pillY;
+                }
             }
         }
 
@@ -420,12 +554,21 @@ class Hud3d extends Initializable {
         // 3. Squad Leader Orders in 3D (Attack, Defend, Move, Build, Destroy, Observe)
         // ---------------------------------------------------------------------
         const showOrders = (typeof options_drawAllOrderIcons !== "undefined") ? options_drawAllOrderIcons : false;
-        if (showOrders && typeof AllSLOrders !== "undefined" && typeof icons !== "undefined" && icons.squadorders) {
+        let selOrderTeam = -1, selOrderSquad = -1;
+        if (typeof SelectedPlayer !== "undefined" && SelectedPlayer != SELECTED_NOTHING && typeof AllPlayers !== "undefined" && AllPlayers[SelectedPlayer]) {
+            selOrderTeam = AllPlayers[SelectedPlayer].team;
+            selOrderSquad = AllPlayers[SelectedPlayer].squad;
+        } else if (typeof SelectedSquadTeam !== "undefined" && SelectedSquadTeam != SELECTED_NOTHING) {
+            selOrderTeam = SelectedSquadTeam;
+            selOrderSquad = SelectedSquadNumber;
+        }
+        if ((showOrders || (selOrderTeam > 0 && selOrderSquad > 0)) && typeof AllSLOrders !== "undefined" && typeof icons !== "undefined" && icons.squadorders) {
             const orderEnums = [null, null, null, null, [0, "#cbc337"], [33, "#ff9900"], [66, "#ca32f2"], [99, "#ca32f2"], [132, "#ff9900"], [165, "#ff9900"]];
 
             for (const index in AllSLOrders) {
                 const order = AllSLOrders[index];
                 if (!order || order.type == null || order.type === -1 || order.X == null || order.Z == null) continue;
+                if (!showOrders && (order.team !== selOrderTeam || order.squad !== selOrderSquad)) continue;
 
                 const e = orderEnums[order.type];
                 if (!e) continue;
@@ -462,12 +605,14 @@ class Hud3d extends Initializable {
         // ---------------------------------------------------------------------
         // 5. Render FOBs / Hideouts HUD Markers
         // ---------------------------------------------------------------------
-        if (typeof AllFobs !== "undefined") {
+        if (showKitIcons && typeof AllFobs !== "undefined") {
             for (const fobId in AllFobs) {
                 const fob = AllFobs[fobId];
                 if (!fob) continue;
                 let groundY = (typeof heightmap !== "undefined") ? heightmap.getHeightFromCoords(fob.X, fob.Z) : 0;
-                const fobProj = this.worldToScreen(fob.X, groundY + 2.5, fob.Z);
+                const objY = (typeof fob.Y === "number") ? fob.Y : parseFloat(fob.Y);
+                const baseElevY = (Number.isFinite(objY) && objY > groundY + 0.25) ? objY : groundY;
+                const fobProj = this.worldToScreen(fob.X, baseElevY + 2.5, fob.Z);
                 if (!fobProj) continue;
 
                 const distScale = Math.max(0.6, Math.min(1.2, 70.0 / Math.max(20.0, fobProj.dist)));
@@ -478,7 +623,9 @@ class Hud3d extends Initializable {
                 ctx.fillStyle = (fob.team === 2) ? "#2299ff" : "#ff3300";
                 ctx.strokeStyle = "#000000";
                 ctx.lineWidth = Math.max(1.5, 2.0 * scale);
+                ctx.lineJoin = "miter";
 
+                // PR in-game FOB icon: team-colored triangle with black outline and center black dot
                 ctx.beginPath();
                 ctx.moveTo(fobProj.x, fobProj.y - triSize);
                 ctx.lineTo(fobProj.x + triSize, fobProj.y + triSize);
@@ -487,11 +634,59 @@ class Hud3d extends Initializable {
                 ctx.fill();
                 ctx.stroke();
 
-                ctx.fillStyle = "#ffffff";
-                ctx.font = `bold ${Math.round(9 * scale)}px Arial, sans-serif`;
-                ctx.textAlign = "center";
-                ctx.fillText("FOB", fobProj.x, fobProj.y + triSize + Math.round(11 * scale));
+                ctx.fillStyle = "#000000";
+                ctx.beginPath();
+                ctx.arc(fobProj.x, fobProj.y + triSize * 0.28, Math.max(2.2, triSize * 0.34), 0, Math.PI * 2);
+                ctx.fill();
                 ctx.restore();
+            }
+        }
+
+        // ---------------------------------------------------------------------
+        // 6. Selected Kill Midpoint Tactical Badge (distance & weapon)
+        // ---------------------------------------------------------------------
+        if (typeof SelectedKill !== "undefined" && SelectedKill != SELECTED_NOTHING &&
+            typeof eventArrays !== "undefined" && eventArrays.kills && eventArrays.kills.events[SelectedKill]) {
+            const k = eventArrays.kills.events[SelectedKill];
+            const ax = Number(k.AttackerX), az = Number(k.AttackerY);
+            const vx = Number(k.VictimX), vz = Number(k.VictimY);
+            if (Number.isFinite(ax) && Number.isFinite(az) && Number.isFinite(vx) && Number.isFinite(vz)) {
+                let ay = Number.isFinite(Number(k.AttackerZ)) ? Number(k.AttackerZ) : 0;
+                let vy = Number.isFinite(Number(k.VictimZ)) ? Number(k.VictimZ) : 0;
+                if (typeof heightmap !== "undefined") {
+                    ay = Math.max(ay, heightmap.getHeightFromCoords(ax, az) + 0.8);
+                    vy = Math.max(vy, heightmap.getHeightFromCoords(vx, vz) + 0.8);
+                }
+                const mx = (ax + vx) * 0.5;
+                const mz = (az + vz) * 0.5;
+                const my = (ay + vy) * 0.5 + 1.8;
+                const midProj = this.worldToScreen(mx, my, mz);
+                if (midProj) {
+                    const distM = k.Distance != null ? `${k.Distance}m` : `${Math.round(Math.hypot(vx - ax, vz - az))}m`;
+                    const weap = k.Weapon ? ` | ${k.Weapon}` : "";
+                    const label = `${distM}${weap}`;
+
+                    ctx.save();
+                    ctx.font = `bold 10px Arial, sans-serif`;
+                    const tw = ctx.measureText(label).width;
+                    const padX = 6;
+                    const pillW = tw + padX * 2;
+                    const pillH = 16;
+                    const px = Math.round(midProj.x - pillW * 0.5);
+                    const py = Math.round(midProj.y - pillH - 4);
+
+                    ctx.fillStyle = "rgba(23, 35, 34, 0.90)";
+                    ctx.fillRect(px, py, pillW, pillH);
+                    ctx.strokeStyle = "#e2c87a";
+                    ctx.lineWidth = 1;
+                    ctx.strokeRect(px + 0.5, py + 0.5, pillW - 1, pillH - 1);
+
+                    ctx.fillStyle = "#f4edd3";
+                    ctx.textAlign = "center";
+                    ctx.textBaseline = "middle";
+                    ctx.fillText(label, Math.round(midProj.x), py + pillH * 0.5);
+                    ctx.restore();
+                }
             }
         }
 
@@ -503,7 +698,9 @@ class Hud3d extends Initializable {
                 const R = AllRallies[rKey];
                 if (!R) continue;
                 let groundY = (typeof heightmap !== "undefined") ? heightmap.getHeightFromCoords(R.X, R.Z) : 0;
-                const rallyProj = this.worldToScreen(R.X, groundY + 1.2, R.Z);
+                const objY = (typeof R.Y === "number") ? R.Y : parseFloat(R.Y);
+                const baseElevY = (Number.isFinite(objY) && objY > groundY + 0.25) ? objY : groundY;
+                const rallyProj = this.worldToScreen(R.X, baseElevY + 1.2, R.Z);
                 if (!rallyProj) continue;
 
                 const distScale = Math.max(0.6, Math.min(1.2, 70.0 / Math.max(20.0, rallyProj.dist)));
@@ -538,7 +735,9 @@ class Hud3d extends Initializable {
                 const cache = AllCaches[cId];
                 if (!cache) continue;
                 let groundY = (typeof heightmap !== "undefined") ? heightmap.getHeightFromCoords(cache.X, cache.Z) : 0;
-                const cacheProj = this.worldToScreen(cache.X, groundY + 1.5, cache.Z);
+                const objY = (typeof cache.Y === "number") ? cache.Y : parseFloat(cache.Y);
+                const baseElevY = (Number.isFinite(objY) && objY > groundY + 0.25) ? objY : groundY;
+                const cacheProj = this.worldToScreen(cache.X, baseElevY + 1.5, cache.Z);
                 if (!cacheProj) continue;
 
                 const distScale = Math.max(0.6, Math.min(1.2, 70.0 / Math.max(20.0, cacheProj.dist)));
@@ -557,33 +756,114 @@ class Hud3d extends Initializable {
         if (this.showSpeedNotification && (performance.now() - this.showSpeedNotification.time < 1600)) {
             const age = (performance.now() - this.showSpeedNotification.time) / 1000.0;
             const alpha = Math.min(1.0, (1.6 - age) * 2.5);
-            const text = `3D Camera Speed: ${Math.round(this.showSpeedNotification.speed)} m/s`;
+            const speedPrefix = (typeof ANALYSER_I18N !== "undefined" && typeof currentAnalyserLang !== "undefined"
+                && ANALYSER_I18N[currentAnalyserLang] && ANALYSER_I18N[currentAnalyserLang].cameraSpeedPrefix)
+                || "3D Camera Speed:";
+            const text = `${speedPrefix} ${Math.round(this.showSpeedNotification.speed)} m/s`;
 
             ctx.save();
-            ctx.font = "bold 13px 'Roboto', 'Open Sans', sans-serif";
+            ctx.font = "bold 12px Arial, Helvetica, sans-serif";
             const tw = ctx.measureText(text).width;
-            const bx = (this.canvas.width / 2) - ((tw + 26) / 2);
-            const by = this.canvas.height - 85;
+            const bw = tw + 22;
+            const bh = 24;
+            const bx = Math.round((this.canvas.width / 2) - (bw / 2));
+            const by = this.canvas.height - 84;
 
-            ctx.fillStyle = `rgba(15, 23, 42, ${0.85 * alpha})`;
+            ctx.fillStyle = `rgba(23, 35, 34, ${0.93 * alpha})`;
             ctx.beginPath();
             if (typeof ctx.roundRect === "function") {
-                ctx.roundRect(bx, by, tw + 26, 28, 6);
+                ctx.roundRect(bx, by, bw, bh, 2);
             } else {
-                ctx.rect(bx, by, tw + 26, 28);
+                ctx.rect(bx, by, bw, bh);
             }
             ctx.fill();
 
-            ctx.strokeStyle = `rgba(59, 130, 246, ${0.9 * alpha})`;
-            ctx.lineWidth = 1.5;
+            ctx.strokeStyle = `rgba(85, 85, 85, ${alpha})`;
+            ctx.lineWidth = 1;
             ctx.stroke();
 
-            ctx.fillStyle = `rgba(255, 255, 255, ${alpha})`;
+            ctx.fillStyle = `rgba(239, 239, 241, ${alpha})`;
             ctx.textAlign = "center";
             ctx.textBaseline = "middle";
-            ctx.fillText(text, this.canvas.width / 2, by + 14);
+            ctx.fillText(text, this.canvas.width / 2, by + (bh / 2));
             ctx.restore();
         }
+
+        this._lastTick = curTick;
+
+        // Continue animating smoothly until all icons settle onto their targets
+        if (anyIconMoving && typeof is3DMode !== "undefined" && is3DMode && typeof requestUpdate === "function") {
+            requestUpdate();
+        }
+    }
+
+    _getSmoothedWorldPos(ent, targetX, targetY, targetZ, dt, instant) {
+        if (!ent || instant || ent._hudX == null || isNaN(ent._hudX) || ent._hudY == null || isNaN(ent._hudY) || ent._hudZ == null || isNaN(ent._hudZ)) {
+            if (ent) {
+                ent._hudX = targetX;
+                ent._hudY = targetY;
+                ent._hudZ = targetZ;
+            }
+            return { x: targetX, y: targetY, z: targetZ, settled: true };
+        }
+
+        const dx = targetX - ent._hudX;
+        const dy = targetY - ent._hudY;
+        const dz = targetZ - ent._hudZ;
+        const distSq = dx * dx + dy * dy + dz * dz;
+
+        // Snap immediately on teleport, spawn/respawn, or seek jump
+        if (distSq > 144.0) {
+            ent._hudX = targetX;
+            ent._hudY = targetY;
+            ent._hudZ = targetZ;
+            return { x: targetX, y: targetY, z: targetZ, settled: true };
+        }
+
+        if (distSq < 0.0001) {
+            ent._hudX = targetX;
+            ent._hudY = targetY;
+            ent._hudZ = targetZ;
+            return { x: targetX, y: targetY, z: targetZ, settled: true };
+        }
+
+        const alphaXZ = 1.0 - Math.exp(-12.0 * dt);
+        const alphaY = 1.0 - Math.exp(-6.5 * dt);
+
+        ent._hudX += dx * alphaXZ;
+        ent._hudY += dy * alphaY;
+        ent._hudZ += dz * alphaXZ;
+
+        return { x: ent._hudX, y: ent._hudY, z: ent._hudZ, settled: false };
+    }
+
+    pickEntityAtScreenPos(screenX, screenY) {
+        if (!this.initialized || !this.canvas || !this.hitboxes || this.hitboxes.length === 0) return null;
+
+        const rect = this.canvas.getBoundingClientRect();
+        const scaleX = (rect && rect.width > 0) ? (this.canvas.width / rect.width) : 1.0;
+        const scaleY = (rect && rect.height > 0) ? (this.canvas.height / rect.height) : 1.0;
+        const cx = screenX * scaleX;
+        const cy = screenY * scaleY;
+
+        let best = null;
+        let bestScore = Infinity;
+
+        for (let i = 0; i < this.hitboxes.length; i++) {
+            const hb = this.hitboxes[i];
+            const dx = cx - hb.x;
+            const dy = cy - hb.y;
+            const dSq = dx * dx + dy * dy;
+            if (dSq <= hb.r * hb.r) {
+                // Prefer icons closest to cursor, breaking close ties by camera depth
+                const score = dSq + hb.dist * 0.001;
+                if (score < bestScore) {
+                    bestScore = score;
+                    best = hb.entity;
+                }
+            }
+        }
+        return best;
     }
 
     computeSpottedEntities() {

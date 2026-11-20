@@ -55,6 +55,7 @@ class Heightmap {
     
 
     getHeightFromOffset(i, j) {      
+        if (!this.heightdataview) return this.waterlevel;
         const offset = (i * this.size + j) * this.bytesize;
         if (offset + this.bytesize - 1 > this.heightdataview.byteLength)
             return this.waterlevel;
@@ -72,28 +73,27 @@ class Heightmap {
         return this.waterlevel;
     };
 
-    // TODO
     getHeightFromCoords(x, z) {
         x += this.terrainSize / 2;
         z += this.terrainSize / 2;
         x /= this.scalex;
         z /= this.scalez;
 
-        let xint = Math.floor(x);
-        let zint = Math.floor(z);
-        let dx1 = x - xint;
-        let dz1 = z - zint;
-        let dx2 = 1.0 - dx1;
-        let dz2 = 1.0 - dz1;
-        let q11 = this.getHeightFromOffset(zint, xint);
-        let q12 = this.getHeightFromOffset(zint, xint + 1); 
-        let q21 = this.getHeightFromOffset(zint + 1, xint);
-        let q22 = this.getHeightFromOffset(zint + 1, xint + 1); 
+        const maxIdx = Math.max(0, (this.size || 1) - 1);
+        const xint = Math.max(0, Math.min(maxIdx, Math.floor(x)));
+        const zint = Math.max(0, Math.min(maxIdx, Math.floor(z)));
+        const xnext = Math.min(maxIdx, xint + 1);
+        const znext = Math.min(maxIdx, zint + 1);
+        const dx1 = Math.max(0.0, Math.min(1.0, x - xint));
+        const dz1 = Math.max(0.0, Math.min(1.0, z - zint));
+        const dx2 = 1.0 - dx1;
+        const dz2 = 1.0 - dz1;
+        const q11 = this.getHeightFromOffset(zint, xint);
+        const q12 = this.getHeightFromOffset(zint, xnext);
+        const q21 = this.getHeightFromOffset(znext, xint);
+        const q22 = this.getHeightFromOffset(znext, xnext);
 
-        return dx2 * q11 * dz2 +
-            dx2 * q12 * dz1 +
-            dx1 * q21 * dz2 +
-            dx1 * q22 * dz1; 
+        return dx2 * q11 * dz2 + dx1 * q12 * dz2 + dx2 * q21 * dz1 + dx1 * q22 * dz1;
     }
 
 

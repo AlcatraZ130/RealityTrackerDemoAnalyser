@@ -29,7 +29,7 @@ var animations = {
     animations: [],
 
     reset: function () {
-		Animations.animations = [];
+		animations.animations = [];
     },
 
     animationsPlaying: function () {

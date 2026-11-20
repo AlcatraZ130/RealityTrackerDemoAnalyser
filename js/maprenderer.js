@@ -118,7 +118,35 @@ class MapRenderer {
                     continue;
                 }
                 ctx.drawImage(img, CameraX + x * renderSize, CameraY + y * renderSize, renderSize, renderSize);
-            } 
+            }
+
+        if (typeof options_DrawDOD !== "undefined" && options_DrawDOD && typeof currentDODList !== "undefined" && Array.isArray(currentDODList) && currentDODList.length > 0) {
+            this.drawDodPolygons(ctx);
+        }
+    }
+
+    drawDodPolygons(ctx) {
+        if (!ctx || typeof currentDODList === "undefined" || !Array.isArray(currentDODList)) return;
+        ctx.save();
+        for (let i = 0; i < currentDODList.length; i++) {
+            const CA = currentDODList[i];
+            if (!CA || CA.inverted == 1 || !CA.points || CA.points.length < 3) continue;
+            if (CA.team == 0) ctx.fillStyle = (typeof fillstyle_neutral !== "undefined") ? fillstyle_neutral : "rgba(128, 128, 128, 0.4)";
+            else if (CA.team == 2) ctx.fillStyle = (typeof fillstyle_red !== "undefined") ? fillstyle_red : "rgba(255, 0, 0, 0.2)";
+            else ctx.fillStyle = (typeof fillstyle_blue !== "undefined") ? fillstyle_blue : "rgba(0, 0, 255, 0.2)";
+
+            ctx.beginPath();
+            for (let j = 0; j < CA.points.length; j++) {
+                const pt = CA.points[j];
+                const px = XtoCanvas(pt[0]);
+                const py = YtoCanvas(pt[1]);
+                if (j === 0) ctx.moveTo(px, py);
+                else ctx.lineTo(px, py);
+            }
+            ctx.closePath();
+            ctx.fill();
+        }
+        ctx.restore();
     }
 
     // No checks - only call when needed

@@ -75,9 +75,17 @@ $(()=>
 
 
 var MapsURL = "Maps/" 
+var TerrainMapsURL = "TerrainMaps/"
+var TerrainDetailURL = "TerrainDetail/"
 var HeightmapURL = "Heightmaps/"
 var MapImage = null
 var MapImageWithCombatArea = null
+var TerrainImage = null
+var TerrainImageFailed = false
+var TerrainSplatImage = null
+var TerrainSplatFailed = false
+var TerrainDetailImages = {}
+var TerrainDetailExpectedCount = 0
 
 
 // Icons and data
@@ -208,8 +216,11 @@ function createColoredMapIcons()
 				})
 			})(name, tempImg)
 
-		tempImg.onerror = onErrorLoading
-		tempImg.src = loadImageFromAtlas(name)
+		const atlasDataUrl = loadImageFromAtlas(name)
+		if (atlasDataUrl) {
+			tempImg.onerror = onErrorLoading
+			tempImg.src = atlasDataUrl
+		}
 	})
 	
 }
@@ -453,19 +464,82 @@ function stage3LoadingFininshed()
 	
 	if (MapSize == 0)
 	{
-		if (MapName in mapSizeDict)
-			MapSize = mapSizeDict[MapName]
+		const mapKey = MapName ? MapName.toLowerCase() : "";
+		if (typeof heightmapData !== "undefined" && MapName && heightmapData[MapName] && heightmapData[MapName].fullsize)
+			MapSize = Number(heightmapData[MapName].fullsize) / 1024;
+		else if (typeof PR_MAPS_DATABASE !== "undefined" && mapKey && PR_MAPS_DATABASE[mapKey] && PR_MAPS_DATABASE[mapKey].size_km)
+			MapSize = PR_MAPS_DATABASE[mapKey].size_km;
+		else if (MapName in mapSizeDict)
+			MapSize = mapSizeDict[MapName];
 		else
-			MapSize = prompt("Map unknown, please enter map size (0.5,1,2,4,8)")
+			MapSize = prompt("Map unknown, please enter map size (0.5,1,2,4,8)");
 	}
 	
-	//Load this map's image
+	//Load this map's image (2D tactical map + legacy fallback) and clean 3D terrain texture
 	const mapKeyLower = MapName ? MapName.toLowerCase() : "default";
+	TerrainImage = null;
+	TerrainImageFailed = false;
 	downloadManager.download(MapsURL + mapKeyLower + ".png", "image", (img) => {
 		MapImage = img;
 		createMapImageWithCombatArea();
+		if (typeof terrainRenderer !== "undefined" && terrainRenderer.initialized && (TerrainImageFailed || (typeof options_RealTerrain !== "undefined" && !options_RealTerrain))) {
+			terrainRenderer.updateMapTexture();
+		}
 		requestUpdate();
 	}, "Map image");
+	downloadManager.download(TerrainMapsURL + mapKeyLower + ".webp?v=cal2", "image", (img) => {
+		TerrainImage = img;
+		TerrainImageFailed = false;
+		if (typeof terrainRenderer !== "undefined" && terrainRenderer.initialized) {
+			terrainRenderer.updateMapTexture();
+		}
+		requestUpdate();
+	}, "3D Terrain texture", (d) => {
+		TerrainImageFailed = true;
+		downloadManager.cleanDownload(d);
+		if (typeof terrainRenderer !== "undefined" && terrainRenderer.initialized && MapImage != null) {
+			terrainRenderer.updateMapTexture();
+		}
+		requestUpdate();
+	});
+
+	// Phase 2 detail splatting assets (non-blocking: enhances close-up detail once downloaded)
+	TerrainSplatImage = null;
+	TerrainSplatFailed = false;
+	TerrainDetailImages = {};
+	TerrainDetailExpectedCount = 0;
+	const detailMeta = (typeof TERRAIN_DETAIL_DB !== "undefined" && TERRAIN_DETAIL_DB) ? TERRAIN_DETAIL_DB[mapKeyLower] : null;
+	if (detailMeta && Array.isArray(detailMeta.layers)) {
+		downloadManager.download(TerrainMapsURL + mapKeyLower + "_splat.webp", "image", (img) => {
+			TerrainSplatImage = img;
+			if (typeof terrainRenderer !== "undefined" && terrainRenderer.initialized) {
+				terrainRenderer.tryInitDetailResources();
+			}
+			requestUpdate();
+		}, "3D Terrain splat", (d) => {
+			TerrainSplatFailed = true;
+			downloadManager.cleanDownload(d);
+		});
+
+		const uniqueStems = [];
+		for (const lyr of detailMeta.layers) {
+			if (lyr && lyr.tex && !uniqueStems.includes(lyr.tex)) {
+				uniqueStems.push(lyr.tex);
+			}
+		}
+		TerrainDetailExpectedCount = uniqueStems.length;
+		for (const stem of uniqueStems) {
+			downloadManager.download(TerrainDetailURL + stem + ".webp", "image", (img) => {
+				TerrainDetailImages[stem] = img;
+				if (typeof terrainRenderer !== "undefined" && terrainRenderer.initialized) {
+					terrainRenderer.tryInitDetailResources();
+				}
+				requestUpdate();
+			}, "Detail texture " + stem, (d) => {
+				downloadManager.cleanDownload(d);
+			});
+		}
+	}
 
 	mapRenderer.init();
 
@@ -499,6 +573,10 @@ function ParseDemo_Start()
 {
 	if (typeof analyserPreloader !== "undefined") analyserPreloader.resetResults()
 	if (typeof markerDiagnostics !== "undefined") markerDiagnostics.length = 0
+	if (typeof savedStates !== "undefined") savedStates = {}
+	if (typeof LatestState !== "undefined") LatestState = -1
+	if (typeof tickToTime !== "undefined") tickToTime = [0]
+	if (typeof _timeCounter !== "undefined") _timeCounter = 0
 	isFastForwarding = true
 	messagePos = 0
 	Tick_Count = 0
@@ -531,7 +609,7 @@ function ParseDemo_End()
 	InitialParse = false
 	if (typeof markerDiagnosticsSummary === "function") markerDiagnosticsSummary()
 
-	// Safe double-verification of demo tickrate
+	// Safe double-verification of demo tickrate (do NOT mutate TICKSPERSAVE after savedStates were built)
 	if (typeof _timeCounter !== "undefined" && _timeCounter > 0 && typeof Tick_Count !== "undefined" && Tick_Count > 0) {
 		const measuredHz = Tick_Count / _timeCounter;
 		if (measuredHz > 0) {
@@ -541,10 +619,6 @@ function ParseDemo_End()
 		DetectedDemoHz = 1.0 / DemoTimePerTick;
 	}
 	IsHighTickrateDemo = (DetectedDemoHz >= 10.0);
-
-	if (typeof TICKSPERSAVE !== "undefined") {
-		TICKSPERSAVE = Math.max(50, Math.round(30.0 * (DetectedDemoHz || 3.0)));
-	}
 
 	const badgeElem = document.getElementById("lblDemoTickrateBadge");
 	if (badgeElem) {
@@ -589,6 +663,9 @@ function stage4LoadingFininshed()
 	} catch (e) {
 		console.error("Error in loadSettings():", e);
 	}
+	if (typeof terrainRenderer !== "undefined" && terrainRenderer.initialized) {
+		terrainRenderer.updateDodOverlay();
+	}
 
 	// Auto-configure interpolation mode for high-rate vs legacy demo if user hasn't explicitly set an override in localStorage
 	if (localStorage.getItem("options_Interpolation") === null) {
@@ -607,10 +684,7 @@ function stage4LoadingFininshed()
 	}
 
 	if (typeof updateAnalyserSliderLabels === "function") {
-		try { updateAnalyserSliderLabels(); } catch (e) {}
-	}
-	if (typeof killfeed_ApplyNoLOSMarkers === "function") {
-		try { killfeed_ApplyNoLOSMarkers(); } catch (e) {}
+		try { updateAnalyserSliderLabels(true); } catch (e) {}
 	}
 	
 	if (getUrlParameter("t")) {
@@ -631,6 +705,34 @@ function stage4LoadingFininshed()
 			setCanvasCenterWithZoom(cx, cy, isNaN(czoom) ? 1 : czoom / options_canvasScale);
 	} else {
 		setCanvasCenterWithZoom(0, 0, 1);
+	}
+
+	const urlMode = getUrlParameter("mode");
+	if (urlMode === "3dfree" || urlMode === "3dtop") {
+		if (typeof toggle3dMode === "function") {
+			toggle3dMode();
+			if (urlMode === "3dtop" && viewportMode !== VIEWPORT_3D_TOPDOWN) {
+				toggle3dMode();
+			}
+			if (typeof renderer3d !== "undefined" && renderer3d && renderer3d.initialized) {
+				const x3 = parseFloat(getUrlParameter("x3"));
+				const y3 = parseFloat(getUrlParameter("y3"));
+				const z3 = parseFloat(getUrlParameter("z3"));
+				const yaw3 = parseFloat(getUrlParameter("yaw"));
+				const pitch3 = parseFloat(getUrlParameter("pitch"));
+				if (!isNaN(x3) && !isNaN(y3) && !isNaN(z3)) {
+					renderer3d.cameraPos[0] = x3;
+					renderer3d.cameraPos[1] = y3;
+					renderer3d.cameraPos[2] = z3;
+				}
+				if (!isNaN(yaw3)) renderer3d.cameraYaw = yaw3;
+				if (!isNaN(pitch3)) renderer3d.cameraPitch = pitch3;
+			}
+		}
+	}
+
+	if (typeof analyserTimeline !== "undefined") {
+		try { analyserTimeline.draw(); } catch (e) {}
 	}
 
 	//Draw the canvas for the first time
@@ -777,7 +879,7 @@ function createMapImageWithCombatArea()
 	})
 	
 	MapImageWithCombatArea = c;
-	if (typeof terrainRenderer !== "undefined" && terrainRenderer.initialized) {
+	if (typeof terrainRenderer !== "undefined" && terrainRenderer.initialized && !(typeof TerrainImage !== "undefined" && TerrainImage != null)) {
 		terrainRenderer.updateMapTexture(MapImageWithCombatArea);
 	}
 	
@@ -842,6 +944,7 @@ function colorImage(white)
 function loadSettings()
 {
 	delete localStorage["options_DrawBuildingWireframes"];
+	delete localStorage["options_CameraTracking"];
 
 	$("input[id^='options_']").each(function() {
 		const id = this.id;
@@ -854,7 +957,7 @@ function loadSettings()
 
 	// Override with localStorage if previously saved by the user
 	for (var Name in localStorage) 
-		if (Name.startsWith("options_") && Name !== "options_DrawBuildingWireframes")
+		if (Name.startsWith("options_") && Name !== "options_DrawBuildingWireframes" && Name !== "options_CameraTracking" && Name !== "options_VisionConeRange")
 		{
 			try {
 				const val = JSON.parse(localStorage[Name]);
@@ -864,13 +967,33 @@ function loadSettings()
 				if (elem) {
 					if (elem.type === "checkbox")
 						elem.checked = !!val;
-					else if (elem.type === "range")
-						elem.value = val;
+					else if (elem.type === "range" || elem.tagName === "SELECT")
+						elem.value = String(val);
 				}
 			} catch (e) {}
 		}
 
+	if (localStorage.getItem("options_VisionConeQuality") !== null && typeof setVisionConeQuality === "function") {
+		try {
+			const q = JSON.parse(localStorage.getItem("options_VisionConeQuality"));
+			if (q) setVisionConeQuality(q);
+		} catch (e) {}
+	}
+
 	window.options_DrawBuildingWireframes = false;
 	const wireframeElem = document.getElementById("options_DrawBuildingWireframes");
 	if (wireframeElem) wireframeElem.checked = false;
+
+	window.options_CameraTracking = false;
+	const camTrackElem = document.getElementById("options_CameraTracking");
+	if (camTrackElem) camTrackElem.checked = false;
+
+	if (typeof updateHudDependencies === "function") {
+		updateHudDependencies();
+	} else {
+		const detailElem = document.getElementById("options_TerrainDetail");
+		if (detailElem && typeof window.options_RealTerrain !== "undefined") {
+			detailElem.disabled = !window.options_RealTerrain;
+		}
+	}
 }

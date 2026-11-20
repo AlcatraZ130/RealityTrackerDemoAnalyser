@@ -31,7 +31,7 @@ class FlankChronometer {
 	}
 
 	update(p) {
-		if (this.lastSelectedPlayer !== SelectedPlayer) {
+		if (this.lastSelectedPlayer !== SelectedPlayer || (this.lastTick !== -1 && Tick_Current < this.lastTick)) {
 			this.state.clear();
 			this.lastSelectedPlayer = SelectedPlayer;
 		}
@@ -58,9 +58,9 @@ class FlankChronometer {
 					this.state.set(other.id, s);
 				}
 
-				const inCone = coneHits.some(h => h[0].id === other.id);
-				if (inCone && !s.enterConeTick) s.enterConeTick = Tick_Current;
-				if (inCone && !s.laserTick) s.laserTick = Tick_Current; 
+				const hitEntry = coneHits.find(h => h[0].id === other.id);
+				if (hitEntry && !s.enterConeTick) s.enterConeTick = Tick_Current;
+				if (hitEntry && hitEntry[2] <= 5.0 && !s.laserTick) s.laserTick = Tick_Current; 
 
 			} else {
 				// The display is only meaningful while the enemy remains inside the
@@ -77,10 +77,11 @@ class FlankChronometer {
 		const p = AllPlayers[SelectedPlayer];
 		if (!p || p.isJoining || p.ns_lastX == null || !p.isAlive) return;
 
-		// Draw detection circle
+		// Draw tactical dashed detection circle (matches 3D)
 		ctx.save();
-		ctx.strokeStyle = "rgba(128, 0, 128, 0.7)"; // purple
-		ctx.lineWidth = 1.5;
+		ctx.setLineDash([6, 5]);
+		ctx.strokeStyle = "rgba(173, 115, 209, 0.58)";
+		ctx.lineWidth = 1.25;
 		ctx.beginPath();
 		ctx.arc(p.getCanvasX(), p.getCanvasY(), lengthtoCanvas(getAdaptiveFlankRadius()), 0, Math.PI * 2);
 		ctx.stroke();
@@ -105,19 +106,45 @@ class FlankChronometer {
 			// Show timer immediately from 0.0s as soon as enemy enters the zone
 			if (elapsedSeconds < 0.0) continue;
 
-			const x = other.getCanvasX();
-			const y = other.getCanvasY();
+			const x = Math.round(other.getCanvasX());
+			const y = Math.round(other.getCanvasY());
+			const isDead = !other.isAlive || !!s.deathTick;
+
+			let textColor = "#ddd2ec";
+			let bgColor = "rgba(23, 35, 34, 0.88)";
+			let borderColor = "#8c6bb1";
+			if (isDead) {
+				textColor = "#9aa6a5";
+				bgColor = "rgba(26, 28, 30, 0.82)";
+				borderColor = "#5c6665";
+			} else if (s.laserTick) {
+				textColor = "#f2b8b8";
+				borderColor = "#c94a4a";
+			} else if (s.enterConeTick) {
+				textColor = "#f3d9a4";
+				borderColor = "#d49b3e";
+			}
 
 			ctx.save();
-			// Red if targeted, Gray if dead, White if just flanking
-			ctx.fillStyle = s.deathTick ? "gray" : (s.laserTick || s.enterConeTick) ? "#FF0040" : "white";
-			ctx.font = "bold 13px Arial";
-			ctx.shadowColor = "black";
-			ctx.shadowBlur = 4;
-			
+			ctx.font = "bold 10px Arial, sans-serif";
 			const text = elapsedSeconds.toFixed(1) + "s";
 			const textWidth = ctx.measureText(text).width;
-			ctx.fillText(text, x - textWidth / 2, y + 25);
+			const padX = 5;
+			const badgeW = Math.round(textWidth + padX * 2);
+			const badgeH = 14;
+			const badgeX = Math.round(x - badgeW * 0.5);
+			const badgeY = Math.round(y + 13);
+
+			ctx.fillStyle = bgColor;
+			ctx.fillRect(badgeX, badgeY, badgeW, badgeH);
+			ctx.strokeStyle = borderColor;
+			ctx.lineWidth = 1;
+			ctx.strokeRect(badgeX + 0.5, badgeY + 0.5, badgeW - 1, badgeH - 1);
+
+			ctx.fillStyle = textColor;
+			ctx.textAlign = "center";
+			ctx.textBaseline = "middle";
+			ctx.fillText(text, x, badgeY + Math.round(badgeH * 0.5) + 0.5);
 			ctx.restore();
 		}
 	}

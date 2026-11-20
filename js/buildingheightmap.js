@@ -15,7 +15,11 @@
 const EXCLUDE_NAMES = [
     "ambstat", "ambStat", "amdStat", "e_samb",
     "waterplane", "DefaultEnvMap", "waterfall", "fountain",
-    "e_destruction", "burning", "wreckfire"
+    "e_destruction", "burning", "wreckfire",
+    "protection", "supply_placeable", "placeable_unlimited_supply",
+    "air_repairstation", "cpname_", ".ogg",
+    "baselight", "houselight_", "heat_target", "laser_target",
+    "waterlily", "glow", "/=p", "global"
 ];
 
 const PROFILES = [
@@ -134,6 +138,33 @@ class BuildingHeightmap {
 
     // Footprint lookup  -  1:1 match with MapCollisionEditor
 
+    _matchBestFootprintKey(db, lower) {
+        if (db[lower]) return db[lower];
+        // Prefer longest matching prefix on a separator boundary so e.g.
+        // `muttrah_souq_entrance` does not hijack `muttrah_souq_entrance_glassdome` when variants differ
+        let bestLen = -1;
+        let found = null;
+        for (const k in db) {
+            if (lower.startsWith(k)) {
+                const nextCh = lower.charAt(k.length);
+                if (nextCh === "_" || nextCh === "" || (nextCh >= "0" && nextCh <= "9")) {
+                    if (k.length > bestLen) {
+                        bestLen = k.length;
+                        found = db[k];
+                    }
+                }
+            }
+        }
+        if (found) return found;
+        for (const k in db) {
+            if (k.length > 5 && lower.includes(k) && k.length > bestLen) {
+                bestLen = k.length;
+                found = db[k];
+            }
+        }
+        return found;
+    }
+
     _buildFootprintCache() {
         const db = window.MESH_2D_FOOTPRINTS;
         const statics = window.MAP_STATICS_DB;
@@ -152,30 +183,7 @@ class BuildingHeightmap {
             if (seen.has(lower)) continue;
             seen.add(lower);
 
-            // 1. Exact match
-            if (db[lower]) {
-                this._footprintCache.set(lower, db[lower]);
-                continue;
-            }
-            // 2. Starts with key
-            let found = null;
-            for (let k in db) {
-                if (lower.startsWith(k)) {
-                    found = db[k];
-                    break;
-                }
-            }
-            if (found) {
-                this._footprintCache.set(lower, found);
-                continue;
-            }
-            // 3. Key is substring (>5 chars)
-            for (let k in db) {
-                if (k.length > 5 && lower.includes(k)) {
-                    found = db[k];
-                    break;
-                }
-            }
+            const found = this._matchBestFootprintKey(db, lower);
             if (found) {
                 this._footprintCache.set(lower, found);
             }
@@ -193,26 +201,7 @@ class BuildingHeightmap {
         if (this._footprintCache.has(lc)) {
             return this._footprintCache.get(lc);
         }
-        // Fallback for names not in MAP_STATICS_DB (e.g. .con path)
-        if (db[lc]) {
-            this._footprintCache.set(lc, db[lc]);
-            return db[lc];
-        }
-        let found = null;
-        for (let k in db) {
-            if (lc.startsWith(k)) {
-                found = db[k];
-                break;
-            }
-        }
-        if (!found) {
-            for (let k in db) {
-                if (k.length > 5 && lc.includes(k)) {
-                    found = db[k];
-                    break;
-                }
-            }
-        }
+        const found = this._matchBestFootprintKey(db, lc);
         this._footprintCache.set(lc, found || null);
         return found;
     }
@@ -307,7 +296,7 @@ class BuildingHeightmap {
         // -- 1b. Load 100% Authentic 3D Collision Meshes for the Map --
         this.mesh3dDb = {};
         try {
-            const meshRes = await fetch(`MapsStaticobjects/${mapKey}/${mapKey}_mesh3d.json`);
+            const meshRes = await fetch(`MapsStaticobjects/${mapKey}/${mapKey}_mesh3d.json?v=2.6_vstart_fix`);
             if (meshRes.ok) {
                 this.mesh3dDb = await meshRes.json();
                 for (const key in this.mesh3dDb) {
@@ -373,6 +362,8 @@ class BuildingHeightmap {
                 yaw:  o.yaw !== undefined ? o.yaw : (o[4] !== undefined ? o[4] : 0),
                 scaleX: o.scaleX !== undefined ? o.scaleX : (o[5] !== undefined ? o[5] : 1),
                 scaleZ: o.scaleZ !== undefined ? o.scaleZ : (o[6] !== undefined ? o[6] : 1),
+                pitch: o.pitch !== undefined ? o.pitch : (o[7] !== undefined ? o[7] : 0),
+                roll:  o.roll  !== undefined ? o.roll  : (o[8] !== undefined ? o[8] : 0),
             });
         }
     }
@@ -404,6 +395,8 @@ class BuildingHeightmap {
             } else if (line.startsWith("Object.rotation ") || line.startsWith("Object.absoluteRotation ")) {
                 const p = line.substring(line.indexOf(" ") + 1).split("/");
                 if (p.length >= 1) cur.yaw = parseFloat(p[0]);
+                if (p.length >= 2) cur.pitch = parseFloat(p[1]) || 0;
+                if (p.length >= 3) cur.roll = parseFloat(p[2]) || 0;
             }
         }
         if (cur && cur.x !== undefined) this._addObject(cur);
@@ -485,17 +478,23 @@ class BuildingHeightmap {
 
         const rawFp = customPolygon || this._getFootprint(obj.name);
         let fp = null;
+        let fpW = null;
+        let fpL = null;
         let fpH = null;
         let fpMinY = null;
         let fpMaxY = null;
+        let fpBounds = null;
 
         if (Array.isArray(rawFp)) {
             fp = rawFp;
         } else if (rawFp && typeof rawFp === "object") {
             fp = rawFp.poly;
+            fpW = rawFp.w;
+            fpL = rawFp.l;
             fpH = rawFp.h;
             fpMinY = rawFp.minY;
             fpMaxY = rawFp.maxY;
+            fpBounds = rawFp.b || null;
         }
 
         if (fp && fp.length >= 3) {
@@ -518,6 +517,9 @@ class BuildingHeightmap {
 
         const tmplKey = this.getTemplateKey(obj.name);
         const mesh3d = (this.mesh3dDb && (this.mesh3dDb[obj.name] || this.mesh3dDb[tmplKey])) || null;
+        const bounds3d = fpBounds || (mesh3d && mesh3d.b) || null;
+        const realWidth = (fpW && fpW > 0) ? fpW : (bounds3d ? Math.abs(bounds3d[3] - bounds3d[0]) : width);
+        const realLength = (fpL && fpL > 0) ? fpL : (bounds3d ? Math.abs(bounds3d[5] - bounds3d[2]) : length);
 
         const baseY = obj.y || 0;
         const obb = {
@@ -526,6 +528,9 @@ class BuildingHeightmap {
             ns_originalPosKey: posKey,
             x: posX, y: baseY, z: posZ,
             yaw, width, length, height,
+            pitch: obj.pitch || 0,
+            roll: obj.roll || 0,
+            realWidth, realLength, bounds3d,
             scaleX, scaleZ,
             halfW: (width  / 2) * scaleX,
             halfL: (length / 2) * scaleZ,
@@ -572,6 +577,8 @@ class BuildingHeightmap {
                 ns_originalPosKey: this._getPosKey(c.name, c.x, c.z),
                 x: c.x, y: cBaseY, z: c.z,
                 yaw: c.yaw || 0,
+                pitch: c.pitch || 0,
+                roll: c.roll || 0,
                 width: c.width || 6, length: c.length || 6, height: cHeight,
                 scaleX: c.scaleX || 1.0, scaleZ: c.scaleZ || 1.0,
                 halfW: ((c.width  || 6) / 2) * (c.scaleX || 1.0),
@@ -1343,6 +1350,107 @@ class BuildingHeightmap {
         const row = Math.floor((z - origin) / cellSize);
         if (col < 0 || col >= gridSize || row < 0 || row >= gridSize) return -Infinity;
         return this.grid[row * gridSize + col];
+    }
+
+    /**
+     * Fast spatial-grid lookup for walkable elevated structure surfaces (roofs, bridges, bunkers, interior slabs)
+     * underneath [x, y, z], avoiding snapping interior multi-story soldiers up to the roof.
+     */
+    getSupportSurfaceY(x, y, z, terrainH = -Infinity) {
+        if (!this.initialized || !this.spatialGrid || this.spatialGrid.size === 0) {
+            return terrainH;
+        }
+        const sCell = this.spatialCellSize || 2;
+        const list = this.spatialGrid.get(Math.floor(x / sCell) + "," + Math.floor(z / sCell));
+        if (!list || list.length === 0) return terrainH;
+
+        let bestY = terrainH;
+        const maxTopAllowed = (y > terrainH + 1.05) ? (y + 0.35) : (y + 0.05);
+
+        for (let i = 0; i < list.length; i++) {
+            const obb = list[i];
+            if (!obb || obb.hidden || obb.ignoreLOS || obb.isVegetation) continue;
+
+            const obbTop = obb.maxY;
+            if (obbTop == null || isNaN(obbTop) || obbTop <= bestY) continue;
+            if (obb.minY != null && !isNaN(obb.minY) && obb.minY > y + 0.40) continue;
+
+            const rad = -(obb.yaw || 0) * Math.PI / 180;
+            const cosR = Math.cos(rad), sinR = Math.sin(rad);
+            const sx = obb.scaleX || 1.0, sz = obb.scaleZ || 1.0;
+            const dx = x - obb.x, dz = z - obb.z;
+            const lx = (dx * cosR + dz * sinR) / sx;
+
+            // 1. Exact 3D mesh surface lookup (handles multi-story interior floors, roof slabs under parapets, and sloped bridges)
+            const mesh3d = obb.mesh3d;
+            if (mesh3d && mesh3d.i && mesh3d.i.length > 0 && Math.abs(obb.pitch || 0) <= 0.05 && Math.abs(obb.roll || 0) <= 0.05) {
+                const lzMesh = (-dx * sinR + dz * cosR) / sz;
+                const b = mesh3d.b;
+                if (!b || (lx >= b[0] - 0.15 && lx <= b[3] + 0.15 && lzMesh >= b[2] - 0.15 && lzMesh <= b[5] + 0.15)) {
+                    const verts = mesh3d.v;
+                    const indices = mesh3d.i;
+                    const obbY = obb.y || 0;
+                    let meshHitY = bestY;
+                    let foundTri = false;
+
+                    for (let k = 0; k < indices.length; k += 3) {
+                        const i0 = indices[k] * 3, i1 = indices[k + 1] * 3, i2 = indices[k + 2] * 3;
+                        const x0 = verts[i0], z0 = verts[i0 + 2];
+                        const x1 = verts[i1], z1 = verts[i1 + 2];
+                        const x2 = verts[i2], z2 = verts[i2 + 2];
+
+                        const v0x = x2 - x0, v0z = z2 - z0;
+                        const v1x = x1 - x0, v1z = z1 - z0;
+                        const det = v0x * v1z - v1x * v0z;
+                        if (Math.abs(det) < 1e-5) continue;
+
+                        const v2x = lx - x0, v2z = lzMesh - z0;
+                        const invDet = 1.0 / det;
+                        const u = (v2x * v1z - v1x * v2z) * invDet;
+                        if (u < -1e-3 || u > 1.001) continue;
+                        const v = (v0x * v2z - v2x * v0z) * invDet;
+                        if (v < -1e-3 || (u + v) > 1.001) continue;
+
+                        const y0 = verts[i0 + 1];
+                        const dy1 = verts[i1 + 1] - y0;
+                        const dy2 = verts[i2 + 1] - y0;
+                        const nx = dy1 * v0z - v1z * dy2;
+                        const nz = v1x * dy2 - dy1 * v0x;
+                        if (det * det < 0.55 * (nx * nx + det * det + nz * nz)) continue; // Skip steep/wall faces (> ~42 deg)
+
+                        const triY = obbY + y0 + u * dy2 + v * dy1;
+                        if (triY <= maxTopAllowed && Math.abs(y - triY) <= 1.35 && triY > meshHitY) {
+                            meshHitY = triY;
+                            foundTri = true;
+                        }
+                    }
+
+                    if (foundTri) {
+                        bestY = meshHitY;
+                        continue;
+                    }
+                }
+            }
+
+            // 2. OBB top fallback (only when near the OBB top slab, never snapping interior floors UP to roof)
+            if (obbTop > maxTopAllowed || Math.abs(y - obbTop) > 1.35) continue;
+
+            const lzPoly = (dx * sinR - dz * cosR) / sz;
+            const rawFp = obb.customPolygon || this._getFootprint(obb.name);
+            const poly = (rawFp && rawFp.poly) ? rawFp.poly : rawFp;
+            let inside = false;
+            if (poly && poly.length >= 3) {
+                inside = this.pointInPolygon(lx, lzPoly, poly);
+            } else {
+                const hw = (obb.width || 6) / 2;
+                const hl = (obb.length || 6) / 2;
+                inside = (Math.abs(lx) <= hw && Math.abs(lzPoly) <= hl);
+            }
+            if (inside) {
+                bestY = obbTop;
+            }
+        }
+        return bestY;
     }
 }
 

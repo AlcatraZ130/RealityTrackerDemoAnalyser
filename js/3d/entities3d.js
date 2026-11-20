@@ -18,6 +18,10 @@ class Entities3dRenderer extends Initializable {
     rawModelCache = {};
     pendingFetches = new Set();
     failedModels = new Set();
+    texCache = {};
+    pendingTexPaths = {};
+    pendingTexFetches = new Set();
+    failedTexModels = new Set();
     _preloadInProgress = false;
     _preloadFinished = false;
     
@@ -28,12 +32,17 @@ class Entities3dRenderer extends Initializable {
     // Attribute & Uniform Locations
     aVertexPosition = null;
     aVertexNormal = null;
+    aVertexUV = null;
     uModelMatrix = null;
     uViewMatrix = null;
     uProjectionMatrix = null;
     uTeamColor = null;
+    uIsSelected = null;
+    uUseTexture = null;
+    uEntityTex = null;
+    hasSelection = false;
 
-    // Outline Shader Locations
+    // Outline Shader Locations (Legacy Fallback)
     aOutlineVertexPosition = null;
     aOutlineVertexNormal = null;
     uOutlineModelMatrix = null;
@@ -70,47 +79,104 @@ class Entities3dRenderer extends Initializable {
         if (!gl) return false;
 
         // ---------------------------------------------------------------------
-        // 1. Main Entity Shader (Solid Color + Directional/Ambient Lighting)
+        // 1. Main Entity Shader (Solid Color / Lazy Texture + Lighting + MRT Selection Mask)
         // ---------------------------------------------------------------------
-        const vsSource = `
-            attribute vec3 aVertexPosition;
-            attribute vec3 aVertexNormal;
+        const vsSource = `#version 300 es
+            in vec3 aVertexPosition;
+            in vec3 aVertexNormal;
+            in vec2 aVertexUV;
 
             uniform mat4 uModelMatrix;
             uniform mat4 uViewMatrix;
             uniform mat4 uProjectionMatrix;
 
-            varying highp vec3 vNormal;
-            varying highp vec3 vWorldPos;
+            out vec3 vNormal;
+            out vec3 vWorldPos;
+            out vec2 vUV;
 
             void main(void) {
                 vec4 worldPos = uModelMatrix * vec4(aVertexPosition, 1.0);
                 gl_Position = uProjectionMatrix * uViewMatrix * worldPos;
                 vNormal = normalize(mat3(uModelMatrix) * aVertexNormal);
                 vWorldPos = worldPos.xyz;
+                vUV = aVertexUV;
             }
         `;
 
-        const fsSource = `
-            varying highp vec3 vNormal;
-            varying highp vec3 vWorldPos;
+        const fsSource = `#version 300 es
+            precision highp float;
+            precision highp sampler2DShadow;
 
-            uniform highp vec3 uTeamColor;
+            in vec3 vNormal;
+            in vec3 vWorldPos;
+            in vec2 vUV;
+
+            uniform vec3 uTeamColor;
+            uniform float uIsSelected;
+            uniform int uUseTexture;
+            uniform sampler2D uEntityTex;
+            uniform vec3 uSunDir;
+            uniform mat4 uLightSpaceMatrix;
+            uniform sampler2DShadow uShadowMap;
+            uniform int uUseShadows;
+
+            layout(location = 0) out vec4 fragColor;
+            layout(location = 1) out vec4 fragMask;
+
+            float sampleEntityShadow(vec3 worldPos, vec3 norm, float ndotl) {
+                float nOff = mix(0.07, 0.025, ndotl);
+                vec4 ls = uLightSpaceMatrix * vec4(worldPos + norm * nOff, 1.0);
+                vec3 proj = (ls.xyz / ls.w) * 0.5 + 0.5;
+                if (proj.x <= 0.002 || proj.x >= 0.998 || proj.y <= 0.002 || proj.y >= 0.998 || proj.z <= 0.0 || proj.z >= 1.0) {
+                    return 1.0;
+                }
+                float edge = min(min(proj.x, 1.0 - proj.x), min(proj.y, 1.0 - proj.y));
+                float edgeFade = smoothstep(0.0, 0.12, edge);
+                float zRef = proj.z - mix(0.00035, 0.00014, ndotl);
+                float ang = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715)))) * 6.2831853;
+                float ca = cos(ang), sa = sin(ang);
+                mat2 rot = mat2(ca, -sa, sa, ca);
+                const float rad = 1.5 / 2048.0;
+                const vec2 POISSON[9] = vec2[9](
+                    vec2( 0.000,  0.000),
+                    vec2( 0.520,  0.210),
+                    vec2(-0.460,  0.340),
+                    vec2( 0.180, -0.580),
+                    vec2(-0.290, -0.490),
+                    vec2( 0.890, -0.350),
+                    vec2(-0.850, -0.220),
+                    vec2( 0.340,  0.880),
+                    vec2(-0.410,  0.840)
+                );
+                float s = 0.0;
+                for (int i = 0; i < 9; i++) {
+                    vec2 off = (rot * POISSON[i]) * rad;
+                    s += texture(uShadowMap, vec3(proj.xy + off, zRef));
+                }
+                s *= (1.0 / 9.0);
+                return mix(1.0, s, edgeFade);
+            }
 
             void main(void) {
-                highp vec3 norm = normalize(vNormal);
+                vec3 norm = normalize(vNormal);
                 if (!gl_FrontFacing) norm = -norm;
 
-                highp vec3 sunDir = normalize(vec3(0.45, 0.85, -0.30));
-                highp float sunDiff = max(dot(norm, sunDir), 0.0);
+                vec3 sunDir = normalize(uSunDir);
+                float sunDiff = max(dot(norm, sunDir), 0.0);
+                if (uUseShadows == 1 && sunDiff > 0.001) {
+                    float sh = sampleEntityShadow(vWorldPos, norm, sunDiff);
+                    sunDiff *= mix(0.18, 1.0, sh);
+                }
 
-                highp vec3 skyDir = normalize(vec3(-0.40, 0.60, 0.35));
-                highp float skyDiff = max(dot(norm, skyDir), 0.0);
+                vec3 skyDir = normalize(vec3(-sunDir.x, 0.65, -sunDir.z));
+                float skyDiff = max(dot(norm, skyDir), 0.0);
 
-                highp float skyFactor = clamp(norm.y * 0.5 + 0.5, 0.0, 1.0);
-                highp float lighting = 0.30 + (0.44 * sunDiff) + (0.16 * skyDiff) + (0.10 * skyFactor);
+                float skyFactor = clamp(norm.y * 0.5 + 0.5, 0.0, 1.0);
+                float lighting = 0.30 + (0.44 * sunDiff) + (0.16 * skyDiff) + (0.10 * skyFactor);
 
-                gl_FragColor = vec4(uTeamColor * lighting, 1.0);
+                vec3 baseCol = (uUseTexture == 1) ? texture(uEntityTex, vUV).rgb : uTeamColor;
+                fragColor = vec4(baseCol * lighting, 1.0);
+                fragMask = vec4(uIsSelected, 0.0, 0.0, 1.0);
             }
         `;
 
@@ -130,10 +196,43 @@ class Entities3dRenderer extends Initializable {
         this.program = prog;
         this.aVertexPosition = gl.getAttribLocation(prog, 'aVertexPosition');
         this.aVertexNormal = gl.getAttribLocation(prog, 'aVertexNormal');
+        this.aVertexUV = gl.getAttribLocation(prog, 'aVertexUV');
         this.uModelMatrix = gl.getUniformLocation(prog, 'uModelMatrix');
         this.uViewMatrix = gl.getUniformLocation(prog, 'uViewMatrix');
         this.uProjectionMatrix = gl.getUniformLocation(prog, 'uProjectionMatrix');
         this.uTeamColor = gl.getUniformLocation(prog, 'uTeamColor');
+        this.uIsSelected = gl.getUniformLocation(prog, 'uIsSelected');
+        this.uUseTexture = gl.getUniformLocation(prog, 'uUseTexture');
+        this.uEntityTex = gl.getUniformLocation(prog, 'uEntityTex');
+        this.uSunDir = gl.getUniformLocation(prog, 'uSunDir');
+        this.uLightSpaceMatrix = gl.getUniformLocation(prog, 'uLightSpaceMatrix');
+        this.uShadowMap = gl.getUniformLocation(prog, 'uShadowMap');
+        this.uUseShadows = gl.getUniformLocation(prog, 'uUseShadows');
+
+        // Lightweight depth-only shadow caster shader
+        const shadowVs = `#version 300 es
+            in vec3 aVertexPosition;
+            uniform mat4 uModelMatrix;
+            uniform mat4 uLightSpaceMatrix;
+            void main(void) {
+                gl_Position = uLightSpaceMatrix * uModelMatrix * vec4(aVertexPosition, 1.0);
+            }
+        `;
+        const shadowFs = `#version 300 es
+            precision lowp float;
+            void main(void) {}
+        `;
+        const sProg = gl.createProgram();
+        gl.attachShader(sProg, renderer3d.loadShader(gl.VERTEX_SHADER, shadowVs));
+        gl.attachShader(sProg, renderer3d.loadShader(gl.FRAGMENT_SHADER, shadowFs));
+        gl.linkProgram(sProg);
+        if (gl.getProgramParameter(sProg, gl.LINK_STATUS)) {
+            this.shadowProgram = sProg;
+            this.sVertexPosition = gl.getAttribLocation(sProg, 'aVertexPosition');
+            this.sModelMatrix = gl.getUniformLocation(sProg, 'uModelMatrix');
+            this.sLightSpaceMatrix = gl.getUniformLocation(sProg, 'uLightSpaceMatrix');
+        }
+        this._shadowCasters = [];
 
         // ---------------------------------------------------------------------
         // 2. Selection Outline Shader (Expanded Hull #bea425)
@@ -217,6 +316,7 @@ class Entities3dRenderer extends Initializable {
             gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint32Array(turretData.i), gl.STATIC_DRAW);
 
             const gpuMesh = {
+                modelKey: modelKey,
                 isMultiPart: true,
                 hull: {
                     vertexBuffer: hVBuf,
@@ -232,6 +332,10 @@ class Entities3dRenderer extends Initializable {
                     pivot: turretData.pivot || [0.0, 1.5, 0.0]
                 },
                 groundOffset: raw.groundOffset,
+                hasTex: raw.hasTex !== false,
+                preserveOrigin: !!raw.preserveOrigin,
+                maxZ: raw.maxZ || 0.0,
+                isNullMesh: !!raw.isNullMesh,
                 length: raw.length,
                 width: raw.width
             };
@@ -250,12 +354,17 @@ class Entities3dRenderer extends Initializable {
         gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint32Array(raw.data.i), gl.STATIC_DRAW);
 
         const gpuMesh = {
+            modelKey: modelKey,
             isMultiPart: false,
             vertexBuffer: vBuf,
             indexBuffer: iBuf,
             indexCount: raw.data.i.length,
             vertexCount: raw.numVerts,
             groundOffset: raw.groundOffset,
+            hasTex: raw.hasTex !== false,
+            preserveOrigin: !!raw.preserveOrigin,
+            maxZ: raw.maxZ || 0.0,
+            isNullMesh: !!raw.isNullMesh,
             length: raw.length,
             width: raw.width
         };
@@ -264,12 +373,140 @@ class Entities3dRenderer extends Initializable {
         return gpuMesh;
     }
 
+    _loadEntityTexture(texKey, wrapMode) {
+        const cacheKey = `${texKey}_${wrapMode ? 1 : 0}`;
+        if (this.texCache[cacheKey]) {
+            return Promise.resolve(this.texCache[cacheKey]);
+        }
+        if (this.pendingTexPaths[cacheKey]) {
+            return this.pendingTexPaths[cacheKey];
+        }
+        const p = new Promise((resolve) => {
+            const img = new Image();
+            img.crossOrigin = "anonymous";
+            img.onload = () => {
+                const gl = renderer3d.gl;
+                if (!gl) {
+                    resolve(null);
+                    return;
+                }
+                const tex = gl.createTexture();
+                gl.bindTexture(gl.TEXTURE_2D, tex);
+                gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+                gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, img);
+                gl.generateMipmap(gl.TEXTURE_2D);
+                const mode = wrapMode ? gl.REPEAT : gl.CLAMP_TO_EDGE;
+                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, mode);
+                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, mode);
+                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+                gl.bindTexture(gl.TEXTURE_2D, null);
+                this.texCache[cacheKey] = tex;
+                delete this.pendingTexPaths[cacheKey];
+                resolve(tex);
+            };
+            img.onerror = () => {
+                delete this.pendingTexPaths[cacheKey];
+                resolve(null);
+            };
+            img.src = `Textures/entities/${texKey}.webp?v=5.0_soldiers_fix`;
+        });
+        this.pendingTexPaths[cacheKey] = p;
+        return p;
+    }
+
+    async fetchModelTexAsync(modelKey) {
+        if (!modelKey || modelKey.startsWith("proj_") || modelKey.includes("rallypoint") ||
+            modelKey === "cache" || modelKey === "vehicle_dummy" ||
+            this.pendingTexFetches.has(modelKey) || this.failedTexModels.has(modelKey)) return;
+        const gpuMesh = this.gpuMeshCache[modelKey];
+        if (!gpuMesh || gpuMesh.texReady || gpuMesh.hasTex === false || gpuMesh.isNullMesh) return;
+
+        this.pendingTexFetches.add(modelKey);
+        try {
+            const resp = await fetch(`models_3d_tex/${modelKey}.json?v=5.0_soldiers_fix`);
+            if (!resp.ok) {
+                this.failedTexModels.add(modelKey);
+                this.pendingTexFetches.delete(modelKey);
+                return;
+            }
+            const texData = await resp.json();
+            if (!texData || !texData.tex) {
+                this.failedTexModels.add(modelKey);
+                this.pendingTexFetches.delete(modelKey);
+                return;
+            }
+
+            const glTex = await this._loadEntityTexture(texData.tex, !!texData.wrap);
+            const gl = renderer3d.gl;
+            if (!gl || !glTex) {
+                this.failedTexModels.add(modelKey);
+                this.pendingTexFetches.delete(modelKey);
+                return;
+            }
+
+            if (gpuMesh.isMultiPart && texData.hull_uv && texData.turret_uv) {
+                const hUvBuf = gl.createBuffer();
+                gl.bindBuffer(gl.ARRAY_BUFFER, hUvBuf);
+                gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(texData.hull_uv), gl.STATIC_DRAW);
+
+                const tUvBuf = gl.createBuffer();
+                gl.bindBuffer(gl.ARRAY_BUFFER, tUvBuf);
+                gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(texData.turret_uv), gl.STATIC_DRAW);
+
+                gpuMesh.hull.uvBuffer = hUvBuf;
+                gpuMesh.hull.glTexture = glTex;
+                gpuMesh.hull.texReady = true;
+
+                gpuMesh.turret.uvBuffer = tUvBuf;
+                gpuMesh.turret.glTexture = glTex;
+                gpuMesh.turret.texReady = true;
+
+                gpuMesh.texReady = true;
+            } else if (!gpuMesh.isMultiPart) {
+                if (texData.v && texData.i && texData.uv) {
+                    const tvBuf = gl.createBuffer();
+                    gl.bindBuffer(gl.ARRAY_BUFFER, tvBuf);
+                    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(texData.v), gl.STATIC_DRAW);
+
+                    const tiBuf = gl.createBuffer();
+                    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, tiBuf);
+                    gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint32Array(texData.i), gl.STATIC_DRAW);
+
+                    const uvBuf = gl.createBuffer();
+                    gl.bindBuffer(gl.ARRAY_BUFFER, uvBuf);
+                    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(texData.uv), gl.STATIC_DRAW);
+
+                    gpuMesh.texVertexBuffer = tvBuf;
+                    gpuMesh.texIndexBuffer = tiBuf;
+                    gpuMesh.texIndexCount = texData.i.length;
+                    gpuMesh.uvBuffer = uvBuf;
+                    gpuMesh.glTexture = glTex;
+                    gpuMesh.texReady = true;
+                } else if (texData.uv) {
+                    const uvBuf = gl.createBuffer();
+                    gl.bindBuffer(gl.ARRAY_BUFFER, uvBuf);
+                    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(texData.uv), gl.STATIC_DRAW);
+
+                    gpuMesh.uvBuffer = uvBuf;
+                    gpuMesh.glTexture = glTex;
+                    gpuMesh.texReady = true;
+                }
+            }
+
+            if (typeof requestUpdate === "function") requestUpdate();
+        } catch (err) {
+            this.failedTexModels.add(modelKey);
+        }
+        this.pendingTexFetches.delete(modelKey);
+    }
+
     async fetchModelAsync(modelKey) {
         if (!modelKey || this.gpuMeshCache[modelKey] || this.pendingFetches.has(modelKey) || this.failedModels.has(modelKey)) return;
         
         this.pendingFetches.add(modelKey);
         try {
-            const resp = await fetch(`models_3d/${modelKey}.json?v=11.0_restored_clean_1787822000`);
+            const resp = await fetch(`models_3d/${modelKey}.json?v=16.0_soldiers_fix`);
             if (!resp.ok) {
                 this.failedModels.add(modelKey);
                 this.pendingFetches.delete(modelKey);
@@ -286,25 +523,51 @@ class Entities3dRenderer extends Initializable {
             let minY = Infinity, maxY = -Infinity;
             let minX = Infinity, maxX = -Infinity;
             let minZ = Infinity, maxZ = -Infinity;
+            let allMinX = Infinity, allMaxX = -Infinity;
+            let allMinZ = Infinity, allMaxZ = -Infinity;
 
-            const allV = (data.hull && data.turret) ? data.hull.v.concat(data.turret.v) : (data.v || []);
+            const isMulti = Boolean(data.hull && data.turret && Array.isArray(data.hull.v) && Array.isArray(data.turret.v));
+            const allV = isMulti ? data.hull.v.concat(data.turret.v) : (data.v || []);
+            const chassisV = (isMulti && data.hull.v.length >= 6) ? data.hull.v : allV;
             const numVerts = allV.length / 6;
             for (let vIdx = 0; vIdx < numVerts; vIdx++) {
                 const vx = allV[vIdx * 6];
                 const vy = allV[vIdx * 6 + 1];
                 const vz = allV[vIdx * 6 + 2];
+                if (vx < allMinX) allMinX = vx;
+                if (vx > allMaxX) allMaxX = vx;
                 if (vy < minY) minY = vy;
                 if (vy > maxY) maxY = vy;
+                if (vz < allMinZ) allMinZ = vz;
+                if (vz > allMaxZ) allMaxZ = vz;
+            }
+            const numChassisVerts = chassisV.length / 6;
+            for (let vIdx = 0; vIdx < numChassisVerts; vIdx++) {
+                const vx = chassisV[vIdx * 6];
+                const vz = chassisV[vIdx * 6 + 2];
                 if (vx < minX) minX = vx;
                 if (vx > maxX) maxX = vx;
                 if (vz < minZ) minZ = vz;
                 if (vz > maxZ) maxZ = vz;
             }
 
+            const preserveOrigin = (data.preserveOrigin === true);
+            const groundOffset = preserveOrigin ? 0.0 : ((minY < 0) ? -minY : 0.0);
+            const maxSpan = (numVerts > 0) ? Math.max(allMaxX - allMinX, maxY - minY, allMaxZ - allMinZ) : 0.0;
+            const isNullMesh = (data.isNullMesh === true) ||
+                modelKey === "vehicle_uav_fuel" ||
+                modelKey === "vehicle_dummy" ||
+                modelKey.includes("null_staticmesh") ||
+                (!modelKey.startsWith("proj_") && (maxSpan < 0.05 || (numVerts <= 6 && maxSpan <= 0.06)));
+
             const raw = {
                 data: data,
                 numVerts: numVerts,
-                groundOffset: (minY < 0) ? -minY : 0.0,
+                preserveOrigin: preserveOrigin,
+                hasTex: (data.hasTex !== false),
+                isNullMesh: isNullMesh,
+                groundOffset: groundOffset,
+                maxZ: Number.isFinite(maxZ) ? maxZ : 0.0,
                 length: (maxZ > minZ) ? (maxZ - minZ) : 5.0,
                 width: (maxX > minX) ? (maxX - minX) : 2.5
             };
@@ -394,7 +657,7 @@ class Entities3dRenderer extends Initializable {
             for (const vid in AllVehicles) {
                 const v = AllVehicles[vid];
                 if (!v || !v.name) continue;
-                const meshKey = this.getVehicleMeshKey(v.name);
+                const meshKey = this.getVehicleMeshKey(v);
                 if (meshKey && !queue.includes(meshKey)) queue.push(meshKey);
             }
         }
@@ -448,30 +711,78 @@ class Entities3dRenderer extends Initializable {
 
     getVehicleMeshKey(vehicle) {
         if (!vehicle) return null;
-        let rawName = (vehicle.name || vehicle.templateName || '').toLowerCase().trim();
+        let rawName = (typeof vehicle === "string" ? vehicle : (vehicle.name || vehicle.templateName || '')).toLowerCase().trim();
         if (!rawName) return null;
 
         if (typeof isClimbingVehicle === "function" && isClimbingVehicle(rawName)) return null;
+        if (rawName === 'uav_fuel' || rawName === 'null_staticmesh' || rawName === 'vehicle_dummy' || rawName === 'mg_vehicle' || rawName.includes('null_staticmesh')) {
+            return null;
+        }
 
         // 1. Direct Lookup via 1:1 Vehicle Dictionary Table
         if (typeof VEHICLE_DICTIONARY !== "undefined" && VEHICLE_DICTIONARY[rawName]) {
-            return VEHICLE_DICTIONARY[rawName];
+            const mapped = VEHICLE_DICTIONARY[rawName];
+            if (mapped === 'vehicle_dummy' || mapped === 'vehicle_uav_fuel' || mapped.includes('null_staticmesh')) return null;
+            return mapped;
         }
 
         // 2. Direct model key match
         let directKey = 'vehicle_' + rawName;
         if (this.gpuMeshCache[directKey]) return directKey;
 
-        // 3. Fallback: Normalized variant match
-        let cleanName = rawName.replace(/_alt\d*|_sp|_bf2|_woodland|_desert|_camo|_cage|_desert_cage|_dfr|_rws|_pkp|_dshk|_m240[bd]|_atc/g, '');
+        // 3. Fallback: Normalized variant match (token-safe boundaries so _spg9/_spike/_spandrel/_spn are preserved)
+        let cleanName = rawName.replace(/(?:_alt\d*|_sp|_bf2|_woodland|_desert_cage|_desert|_camo|_cage|_dfr|_rws|_pkp|_dshk|_m240[bd]|_atc)(?=_|$)/g, '');
         if (typeof VEHICLE_DICTIONARY !== "undefined" && VEHICLE_DICTIONARY[cleanName]) {
-            return VEHICLE_DICTIONARY[cleanName];
+            const mapped = VEHICLE_DICTIONARY[cleanName];
+            if (mapped === 'vehicle_dummy' || mapped === 'vehicle_uav_fuel' || mapped.includes('null_staticmesh')) return null;
+            return mapped;
         }
 
         let cleanKey = 'vehicle_' + cleanName;
         if (this.gpuMeshCache[cleanKey]) return cleanKey;
 
+        if (rawName.startsWith('init_air')) return 'vehicle_uav_pred';
+
         return directKey;
+    }
+
+    _isDeployableOrTurret(nameOrKey) {
+        if (!nameOrKey) return false;
+        const n = nameOrKey.toLowerCase();
+        // Exclude mobile vehicle hulls (e.g. Ural ZU-23, Flak38 Blitz, Fennek AGL, Boat RIB AGL, UAZ SPG)
+        if (/_(jep|trk|apc|ifv|tnk|aav|atm|acv|ahe|the|jet|shp|bik)_|^boat_|^vehicle_boat/.test(n)) {
+            return false;
+        }
+        const bare = n.startsWith("vehicle_") ? n.slice(8) : n;
+        if (bare.startsWith("aa_") || bare.startsWith("at_") || bare.startsWith("hmg_")) {
+            return true;
+        }
+        return (
+            n.includes("deployable") || n.includes("stationary") || n.includes("bipod") || n.includes("tripod") ||
+            n.includes("ats_") || n.includes("aaa_") || n.includes("mortar") || n.includes("zu23") ||
+            n.includes("zpu") || n.includes("flak") || n.includes("sam_") || n.includes("zis3") || n.includes("pak") ||
+            n.includes("spg") || n.includes("tow") || n.includes("kornet") || n.includes("m220") ||
+            n.includes("m1910") || n.includes("m1919") || n.includes("mg42") || n.includes("dshk") ||
+            n.includes("djigit") || n.includes("milan") || n.includes("hj8") || n.includes("eryx") || n.includes("metis") ||
+            n.includes("mistral") || n.includes("stinger") || n.includes("spike") || n.includes("agl") ||
+            n.includes("sandbag") || n.includes("firebase") || n.includes("hideout") || n.includes("commandpost") ||
+            n.includes("roadblock") || n.includes("foxhole") || n.includes("razorwire") || n.includes("trestle")
+        );
+    }
+
+    _getElevatedEntityY(rawObjY, groundY) {
+        const objY = (typeof rawObjY === "number") ? rawObjY : parseFloat(rawObjY);
+        return (Number.isFinite(objY) && objY > groundY + 0.25) ? objY : groundY;
+    }
+
+    _sampleVehicleSupportY(x, refY, z, hasHm, hasBh, checkStructures = true) {
+        const groundY = hasHm ? heightmap.getHeightFromCoords(x, z) : refY;
+        if (!checkStructures || !hasBh) return groundY;
+        let structY = buildingHeightmap.getSupportSurfaceY(x, refY, z, groundY);
+        if (structY === groundY && refY > groundY + 1.35) {
+            structY = buildingHeightmap.getSupportSurfaceY(x, refY - 0.8, z, groundY);
+        }
+        return structY;
     }
 
     categorizeVehicle(vName) {
@@ -616,16 +927,39 @@ class Entities3dRenderer extends Initializable {
         const gl = renderer3d.gl;
         if (!gl) return;
 
+        const nowMs = (typeof performance !== "undefined" && typeof performance.now === "function") ? performance.now() : Date.now();
+        const rawDt = this._lastDrawMs ? ((nowMs - this._lastDrawMs) / 1000.0) : 0.016;
+        this._lastDrawMs = nowMs;
+        const dt = (rawDt > 0.25) ? 0.016 : Math.min(0.05, Math.max(0.001, rawDt));
+        const altAlpha = 1.0 - Math.exp(-12.0 * dt);
+        const pitchAlpha = 1.0 - Math.exp(-6.5 * dt);
+        const rollAlpha = 1.0 - Math.exp(-4.0 * dt);
+
+        this.hasSelection = false;
         const viewMatrix = renderer3d.getCurrentViewMatrix();
         const projectionMatrix = renderer3d.getCurrentProjectionMatrix();
 
         const isWallhack = (typeof options_Wallhack !== "undefined" && options_Wallhack);
-        if (isWallhack) {
-            gl.disable(gl.DEPTH_TEST);
-        } else {
-            gl.enable(gl.DEPTH_TEST);
-            gl.depthFunc(gl.LEQUAL);
+        gl.enable(gl.DEPTH_TEST);
+        gl.depthFunc(gl.LEQUAL);
+        gl.depthMask(true);
+        this._xrayQueue = isWallhack ? [] : null;
+        this._inXrayPass = false;
+        this._shadowCasters = [];
+
+        // Bind per-frame sun direction & shadow map once on unit 5
+        const sunDir = (typeof renderer3d.getMapSunDirection === "function") ? renderer3d.getMapSunDirection() : [0.4508, 0.8515, -0.3005];
+        const useShadows = !!(renderer3d.shadowsActiveThisFrame && renderer3d.shadowDepthTex);
+        gl.useProgram(this.program);
+        if (this.uSunDir !== null) gl.uniform3f(this.uSunDir, sunDir[0], sunDir[1], sunDir[2]);
+        gl.activeTexture(gl.TEXTURE5);
+        gl.bindTexture(gl.TEXTURE_2D, useShadows ? renderer3d.shadowDepthTex : (renderer3d.shadowDummyTex || null));
+        if (this.uShadowMap !== null) gl.uniform1i(this.uShadowMap, 5);
+        if (this.uUseShadows !== null) gl.uniform1i(this.uUseShadows, useShadows ? 1 : 0);
+        if (useShadows && this.uLightSpaceMatrix !== null) {
+            gl.uniformMatrix4fv(this.uLightSpaceMatrix, false, renderer3d.lightViewProjMatrix);
         }
+        gl.activeTexture(gl.TEXTURE0);
 
         // Check if map changed to rebuild spawns
         const activeMapKey = (typeof buildingHeightmap !== "undefined" && buildingHeightmap._mapKey) ? buildingHeightmap._mapKey : (window.CurrentMapName || null);
@@ -649,8 +983,9 @@ class Entities3dRenderer extends Initializable {
                     if (ent.fallbackKey) this.fetchModelAsync(ent.fallbackKey);
                     continue;
                 }
+                if (activeMesh.isNullMesh) continue;
 
-                const groundOffset = activeMesh.groundOffset || 0.0;
+                const groundOffset = (typeof activeMesh.groundOffset === "number") ? activeMesh.groundOffset : 0.0;
                 let finalY = ent.y + groundOffset;
 
                 // Team 1 is Red, Team 2 is Blue
@@ -667,9 +1002,11 @@ class Entities3dRenderer extends Initializable {
         // 2. Render Live Demo Vehicles (Dynamic Terrain Following: Pitch, Roll & Altitude)
         // ---------------------------------------------------------------------
         if (typeof AllVehicles !== "undefined") {
+            const showEmptyVehicles = (typeof options_DrawEmptyVehicles !== "undefined") ? options_DrawEmptyVehicles : true;
             for (const vId in AllVehicles) {
                 const v = AllVehicles[vId];
                 if (!v) continue;
+                if (!showEmptyVehicles && (!v.Passengers || v.Passengers.size === 0)) continue;
 
                 let posX = (typeof v.getX === "function") ? v.getX() : v.X;
                 let posY = (typeof v.getY === "function") ? v.getY() : (v.Y || 0);
@@ -691,8 +1028,9 @@ class Entities3dRenderer extends Initializable {
                     this.fetchModelAsync(meshKey);
                     continue;
                 }
+                if (activeMesh.isNullMesh) continue;
 
-                const groundOffset = activeMesh.groundOffset || 0.5;
+                const groundOffset = (typeof activeMesh.groundOffset === "number") ? activeMesh.groundOffset : 0.0;
                 const halfLen = Math.max(1.5, Math.min(4.5, (activeMesh.length || 6.0) * 0.40));
                 const halfWidth = Math.max(0.8, Math.min(2.2, (activeMesh.width || 2.8) * 0.40));
 
@@ -710,48 +1048,57 @@ class Entities3dRenderer extends Initializable {
                 let targetPitch = 0.0;
                 let targetRoll = 0.0;
 
-                const isDeployable = meshKey.includes('deployable') || meshKey.includes('ats_') || meshKey.includes('aaa_') || 
-                                     meshKey.includes('tripod') || meshKey.includes('mortar') || meshKey.includes('zu23') || 
-                                     meshKey.includes('spg') || meshKey.includes('tow') || meshKey.includes('kornet') || 
-                                     meshKey.includes('m220') || meshKey.includes('m1910') || meshKey.includes('m1919') || 
-                                     meshKey.includes('mg42') || meshKey.includes('dshk') || meshKey.includes('djigit') || 
-                                     meshKey.includes('milan') || meshKey.includes('mistral') || meshKey.includes('stinger') || 
-                                     meshKey.includes('spike');
+                const isDeployable = this._isDeployableOrTurret(meshKey);
+                const hasHm = (typeof heightmap !== "undefined" && heightmap && heightmap.initialized);
+                const hasBh = (typeof buildingHeightmap !== "undefined" && buildingHeightmap && buildingHeightmap.initialized && typeof buildingHeightmap.getSupportSurfaceY === "function");
 
                 if (isDeployable) {
-                    // Deployable Stationary Weapons sit firmly at ground/structure height without 4-corner vehicle chassis tilt
-                    let baseH = (typeof heightmap !== "undefined") ? heightmap.getHeightFromCoords(posX, posZ) : 0;
-                    targetY = Math.max(baseH, posY);
+                    // Deployable Stationary Weapons sit firmly at ground/structure height without chassis tilt
+                    const supportCenter = (hasHm || hasBh) ? this._sampleVehicleSupportY(posX, posY, posZ, hasHm, hasBh, true) : posY;
+                    targetY = ((posY <= supportCenter + 2.4) ? supportCenter : posY) + groundOffset;
                     targetPitch = 0.0;
                     targetRoll = 0.0;
-                } else if (typeof heightmap !== "undefined") {
-                    const groundCenter = heightmap.getHeightFromCoords(posX, posZ);
+                } else if (hasHm || hasBh) {
+                    const groundCenter = hasHm ? heightmap.getHeightFromCoords(posX, posZ) : posY;
+                    const supportCenter = this._sampleVehicleSupportY(posX, posY, posZ, hasHm, hasBh, true);
 
                     if (!v.isFlyingVehicle) {
-                        // 4-Corner Wheel Contact Model for Realistic Grounding
-                        const frontLeftY = heightmap.getHeightFromCoords(posX + fGameX * halfLen - rGameX * halfWidth, posZ + fGameZ * halfLen - rGameZ * halfWidth);
-                        const frontRightY = heightmap.getHeightFromCoords(posX + fGameX * halfLen + rGameX * halfWidth, posZ + fGameZ * halfLen + rGameZ * halfWidth);
-                        const rearLeftY = heightmap.getHeightFromCoords(posX - fGameX * halfLen - rGameX * halfWidth, posZ - fGameZ * halfLen - rGameZ * halfWidth);
-                        const rearRightY = heightmap.getHeightFromCoords(posX - fGameX * halfLen + rGameX * halfWidth, posZ - fGameZ * halfLen + rGameZ * halfWidth);
+                        if (posY <= supportCenter + 2.4) {
+                            // Vehicle is grounded on terrain or bridge/structure deck (clamp directly, ignore BF2 chassis-origin +1m offset)
+                            const onStructure = (supportCenter > groundCenter + 0.35);
+                            const pitchSampleHalfL = Math.max(2.0, halfLen);
+                            const rollSampleHalfW = Math.max(1.25, halfWidth);
 
-                        const avgFront = (frontLeftY + frontRightY) * 0.5;
-                        const avgRear = (rearLeftY + rearRightY) * 0.5;
-                        const avgRight = (frontRightY + rearRightY) * 0.5;
-                        const avgLeft = (frontLeftY + rearLeftY) * 0.5;
+                            const frontLeftY = this._sampleVehicleSupportY(posX + fGameX * pitchSampleHalfL - rGameX * rollSampleHalfW, posY, posZ + fGameZ * pitchSampleHalfL - rGameZ * rollSampleHalfW, hasHm, hasBh, onStructure);
+                            const frontRightY = this._sampleVehicleSupportY(posX + fGameX * pitchSampleHalfL + rGameX * rollSampleHalfW, posY, posZ + fGameZ * pitchSampleHalfL + rGameZ * rollSampleHalfW, hasHm, hasBh, onStructure);
+                            const rearLeftY = this._sampleVehicleSupportY(posX - fGameX * pitchSampleHalfL - rGameX * rollSampleHalfW, posY, posZ - fGameZ * pitchSampleHalfL - rGameZ * rollSampleHalfW, hasHm, hasBh, onStructure);
+                            const rearRightY = this._sampleVehicleSupportY(posX - fGameX * pitchSampleHalfL + rGameX * rollSampleHalfW, posY, posZ - fGameZ * pitchSampleHalfL + rGameZ * rollSampleHalfW, hasHm, hasBh, onStructure);
 
-                        targetY = Math.max(posY, (avgFront + avgRear) * 0.5) + groundOffset;
+                            const avgFront = (frontLeftY + frontRightY) * 0.5;
+                            const avgRear = (rearLeftY + rearRightY) * 0.5;
+                            const avgRight = (frontRightY + rearRightY) * 0.5;
+                            const avgLeft = (frontLeftY + rearLeftY) * 0.5;
 
-                        // Target Pitch and Roll from 4-corner slope
-                        targetPitch = Math.atan2(avgFront - avgRear, halfLen * 2.0);
-                        targetRoll = Math.atan2(avgRight - avgLeft, halfWidth * 2.0);
+                            const supportAvgY = (supportCenter * 0.5) + ((avgFront + avgRear) * 0.25);
+                            targetY = supportAvgY + groundOffset;
+
+                            // Target Pitch and Roll from stabilized 4-corner slope
+                            targetPitch = Math.atan2(avgFront - avgRear, pitchSampleHalfL * 2.0);
+                            targetRoll = Math.atan2(avgRight - avgLeft, rollSampleHalfW * 2.0);
+                            if (Math.abs(targetRoll) < 0.015) targetRoll = 0.0;
+                        } else {
+                            // Genuinely airborne / falling off cliff
+                            targetY = posY + groundOffset;
+                        }
                     } else {
                         // Flying vehicle (Helicopter, Jet, Drone)
-                        const minAirY = groundCenter + groundOffset;
+                        const minAirY = supportCenter + groundOffset;
                         if (targetY <= minAirY + 1.2) {
-                            // Landed on runway or terrain
+                            // Landed on runway, terrain, or carrier/helipad deck
+                            const onStructure = (supportCenter > groundCenter + 0.35);
                             targetY = minAirY;
-                            const frontY = heightmap.getHeightFromCoords(posX + fGameX * halfLen, posZ + fGameZ * halfLen);
-                            const rearY = heightmap.getHeightFromCoords(posX - fGameX * halfLen, posZ - fGameZ * halfLen);
+                            const frontY = this._sampleVehicleSupportY(posX + fGameX * halfLen, posY, posZ + fGameZ * halfLen, hasHm, hasBh, onStructure);
+                            const rearY = this._sampleVehicleSupportY(posX - fGameX * halfLen, posY, posZ - fGameZ * halfLen, hasHm, hasBh, onStructure);
                             targetPitch = Math.atan2(frontY - rearY, halfLen * 2.0);
                         }
                     }
@@ -763,16 +1110,15 @@ class Entities3dRenderer extends Initializable {
                 targetPitch = Math.max(-0.61, Math.min(0.61, targetPitch));
                 targetRoll = Math.max(-0.44, Math.min(0.44, targetRoll));
 
-                // Smooth Suspension Damping Filter (alpha = 0.12 for natural, heavy chassis inertia)
-                const smoothAlpha = 0.12;
+                // Time-based heavy suspension damping filter (eliminates FPS-dependent jitter & side-to-side wobble)
                 if (v._smoothPitch == null || isNaN(v._smoothPitch)) v._smoothPitch = targetPitch;
-                else v._smoothPitch = v._smoothPitch * (1.0 - smoothAlpha) + targetPitch * smoothAlpha;
+                else v._smoothPitch = v._smoothPitch * (1.0 - pitchAlpha) + targetPitch * pitchAlpha;
 
                 if (v._smoothRoll == null || isNaN(v._smoothRoll)) v._smoothRoll = targetRoll;
-                else v._smoothRoll = v._smoothRoll * (1.0 - smoothAlpha) + targetRoll * smoothAlpha;
+                else v._smoothRoll = v._smoothRoll * (1.0 - rollAlpha) + targetRoll * rollAlpha;
 
-                if (v._smoothY == null || isNaN(v._smoothY)) v._smoothY = targetY;
-                else v._smoothY = v._smoothY * (1.0 - smoothAlpha) + targetY * smoothAlpha;
+                if (v._smoothY == null || isNaN(v._smoothY) || Math.abs(targetY - v._smoothY) > 6.0) v._smoothY = targetY;
+                else v._smoothY = v._smoothY * (1.0 - altAlpha) + targetY * altAlpha;
 
                 const isSelected = (typeof SelectedVehicle !== "undefined" && SelectedVehicle == v.id);
                 // Team 1 is OpFor/Red, Team 2 is BluFor/Blue
@@ -784,8 +1130,11 @@ class Entities3dRenderer extends Initializable {
                 if (Math.abs(v._smoothPitch) > 0.001) mat4.rotateX(modelMatrix, modelMatrix, v._smoothPitch);
                 if (Math.abs(v._smoothRoll) > 0.001) mat4.rotateZ(modelMatrix, modelMatrix, v._smoothRoll);
 
+                // Compute relative turret yaw (in radians) from the main turret gunner seat
+                const turretRelYawRad = activeMesh.isMultiPart ? this.getVehicleTurretRelYawRad(v, rotDeg) : 0.0;
+
                 // Render Vehicle Model
-                this.renderSingleMesh(activeMesh, modelMatrix, viewMatrix, projectionMatrix, teamCol, isSelected);
+                this.renderSingleMesh(activeMesh, modelMatrix, viewMatrix, projectionMatrix, teamCol, isSelected, turretRelYawRad);
             }
         }
 
@@ -812,11 +1161,12 @@ class Entities3dRenderer extends Initializable {
                     terrainH = heightmap.getHeightFromCoords(posX, posZ);
                 }
 
-                // In BF2 demo packets, posY is pelvis height (~0.85m above ground/floor for standing).
-                // The soldier 3D meshes start at the feet (y=0) up to helmet (y=1.58m).
-                // Thus, the floor elevation where the boots stand is:
-                const floorY = Math.max(terrainH, posY - 0.85);
-                const relTerrainY = posY - terrainH;
+                // Resolve supporting surface (terrain vs elevated walkable roof/bridge/bunker/interior floor)
+                let supportY = terrainH;
+                if (typeof buildingHeightmap !== "undefined" && buildingHeightmap.initialized && typeof buildingHeightmap.getSupportSurfaceY === "function") {
+                    supportY = buildingHeightmap.getSupportSurfaceY(posX, posY, posZ, terrainH);
+                }
+                const relSurfaceY = posY - supportY;
 
                 const isSelected = (typeof SelectedPlayer !== "undefined" && SelectedPlayer == p.id);
                 const isSquad = (typeof SelectedSquadTeam !== "undefined" && typeof SelectedSquadNumber !== "undefined" &&
@@ -834,13 +1184,18 @@ class Entities3dRenderer extends Initializable {
                         continue;
                     }
 
+                    // rotateX(+PI/2) flips local +Z into -Y, so lift by front chest/arm thickness above floor
+                    const deadFloorY = Math.max(supportY, posY - 0.85);
+                    const deadLift = (typeof activeMesh.maxZ === "number" && activeMesh.maxZ > 0.1)
+                        ? Math.min(0.48, Math.max(0.25, activeMesh.maxZ * 0.60))
+                        : 0.25;
                     const deadTeamCol = (p.team === 1) ? this.colorDeadTeam1 : this.colorDeadTeam2;
                     const modelMatrix = mat4.create();
-                    mat4.translate(modelMatrix, modelMatrix, [posX, floorY + 0.10, -posZ]);
+                    mat4.translate(modelMatrix, modelMatrix, [posX, deadFloorY + deadLift, -posZ]);
                     mat4.rotateY(modelMatrix, modelMatrix, -(rotDeg * Math.PI / 180));
                     mat4.rotateX(modelMatrix, modelMatrix, Math.PI / 2); // Rotate 90 deg flat onto terrain/deck/roof
 
-                    this.renderSingleMesh(activeMesh, modelMatrix, viewMatrix, projectionMatrix, deadTeamCol, isSelected);
+                    this.renderSingleMesh(activeMesh, modelMatrix, viewMatrix, projectionMatrix, deadTeamCol, isSelected, 0.0, false);
                 } else {
                     // -------------------------------------------------------------
                     // B. Alive Soldier: Authentic Baked Meshes with Kits & Weapons
@@ -858,17 +1213,21 @@ class Entities3dRenderer extends Initializable {
                         stance = "stand";
                     } else if (spdKmh >= 1.8) {
                         // Movimiento táctico
-                        stance = (relTerrainY <= 0.65) ? "crouch" : "stand";
+                        stance = (relSurfaceY <= 0.65) ? "crouch" : "stand";
                     } else {
                         // Estacionario o reptando muy lento (< 1.8 km/h):
-                        if (relTerrainY <= 0.25) {
+                        if (relSurfaceY <= 0.25) {
                             stance = "prone";   // Tirado / Acostado en el suelo
-                        } else if (relTerrainY <= 0.65) {
+                        } else if (relSurfaceY <= 0.65) {
                             stance = "crouch";  // Agachado táctico
                         } else {
                             stance = "stand";   // De pie
                         }
                     }
+
+                    // Stance-calibrated BF2 pelvis/root offset so crouching/proning on elevated slabs stays flush
+                    const stancePelvisOffset = (stance === "prone") ? 0.15 : ((stance === "crouch") ? 0.50 : 0.85);
+                    const floorY = Math.max(supportY, posY - stancePelvisOffset);
 
                     const meshKey = this.getSoldierMeshKey(p, stance);
                     let activeMesh = this.gpuMeshCache[meshKey];
@@ -883,8 +1242,9 @@ class Entities3dRenderer extends Initializable {
                         }
                     }
 
+                    const modelLift = (typeof activeMesh.groundOffset === "number") ? activeMesh.groundOffset : 0.0;
                     const modelMatrix = mat4.create();
-                    mat4.translate(modelMatrix, modelMatrix, [posX, floorY, -posZ]);
+                    mat4.translate(modelMatrix, modelMatrix, [posX, floorY + modelLift, -posZ]);
                     mat4.rotateY(modelMatrix, modelMatrix, -(rotDeg * Math.PI / 180));
 
                     this.renderSingleMesh(activeMesh, modelMatrix, viewMatrix, projectionMatrix, teamCol, isSelected);
@@ -903,6 +1263,7 @@ class Entities3dRenderer extends Initializable {
                 let posX = fob.X;
                 let posZ = fob.Z;
                 let groundY = (typeof heightmap !== "undefined") ? heightmap.getHeightFromCoords(posX, posZ) : 0;
+                const baseElevY = this._getElevatedEntityY(fob.Y, groundY);
 
                 let isInsurgentFaction = (typeof window.OpForTeam !== "undefined") && 
                     ['hamas', 'taliban', 'meinsurgent', 'fsa', 'arf'].includes(window.OpForTeam.toLowerCase());
@@ -914,11 +1275,11 @@ class Entities3dRenderer extends Initializable {
                     continue;
                 }
 
-                const groundOffset = activeMesh.groundOffset || 0.0;
+                const groundOffset = (typeof activeMesh.groundOffset === "number") ? activeMesh.groundOffset : 0.0;
                 let teamCol = (fob.team === 1) ? this.colorTeam1 : this.colorTeam2;
 
                 const modelMatrix = mat4.create();
-                mat4.translate(modelMatrix, modelMatrix, [posX, groundY + groundOffset, -posZ]);
+                mat4.translate(modelMatrix, modelMatrix, [posX, baseElevY + groundOffset, -posZ]);
 
                 this.renderSingleMesh(activeMesh, modelMatrix, viewMatrix, projectionMatrix, teamCol, false);
             }
@@ -935,6 +1296,7 @@ class Entities3dRenderer extends Initializable {
                 let posX = rally.X;
                 let posZ = rally.Z;
                 let groundY = (typeof heightmap !== "undefined") ? heightmap.getHeightFromCoords(posX, posZ) : 0;
+                const baseElevY = this._getElevatedEntityY(rally.Y, groundY);
 
                 let meshKey = (rally.team === 1) ? "vehicle_rallypoint_ru_placeable" : "vehicle_rallypoint_us_placeable";
                 let activeMesh = this.gpuMeshCache[meshKey];
@@ -946,10 +1308,10 @@ class Entities3dRenderer extends Initializable {
                 let isSquad = (typeof SelectedSquadTeam !== "undefined" && typeof SelectedSquadNumber !== "undefined" &&
                                rally.team == SelectedSquadTeam && rally.squad == SelectedSquadNumber);
                 let teamCol = isSquad ? this.colorSquad : ((rally.team === 1) ? this.colorTeam1 : this.colorTeam2);
-                const groundOffset = activeMesh.groundOffset || 0.0;
+                const groundOffset = (typeof activeMesh.groundOffset === "number") ? activeMesh.groundOffset : 0.0;
 
                 const modelMatrix = mat4.create();
-                mat4.translate(modelMatrix, modelMatrix, [posX, groundY + groundOffset, -posZ]);
+                mat4.translate(modelMatrix, modelMatrix, [posX, baseElevY + groundOffset, -posZ]);
 
                 this.renderSingleMesh(activeMesh, modelMatrix, viewMatrix, projectionMatrix, teamCol, false);
             }
@@ -966,6 +1328,7 @@ class Entities3dRenderer extends Initializable {
                 let posX = cache.X;
                 let posZ = cache.Z;
                 let groundY = (typeof heightmap !== "undefined") ? heightmap.getHeightFromCoords(posX, posZ) : 0;
+                const baseElevY = this._getElevatedEntityY(cache.Y, groundY);
 
                 let meshKey = "vehicle_ammocache";
                 let activeMesh = this.gpuMeshCache[meshKey];
@@ -974,9 +1337,9 @@ class Entities3dRenderer extends Initializable {
                     continue;
                 }
 
-                const groundOffset = activeMesh.groundOffset || 0.0;
+                const groundOffset = (typeof activeMesh.groundOffset === "number") ? activeMesh.groundOffset : 0.0;
                 const modelMatrix = mat4.create();
-                mat4.translate(modelMatrix, modelMatrix, [posX, groundY + groundOffset, -posZ]);
+                mat4.translate(modelMatrix, modelMatrix, [posX, baseElevY + groundOffset, -posZ]);
 
                 this.renderSingleMesh(activeMesh, modelMatrix, viewMatrix, projectionMatrix, this.colorCache, false);
             }
@@ -1019,53 +1382,234 @@ class Entities3dRenderer extends Initializable {
                 mat4.translate(modelMatrix, modelMatrix, [posX, posY, -posZ]);
                 mat4.rotateY(modelMatrix, modelMatrix, -(rotDeg * Math.PI / 180));
 
-                this.renderSingleMesh(activeMesh, modelMatrix, viewMatrix, projectionMatrix, teamCol, false);
+                this.renderSingleMesh(activeMesh, modelMatrix, viewMatrix, projectionMatrix, teamCol, false, 0.0, false);
             }
         }
 
+        // Pass 2 (X-Ray): Draw only occluded parts behind walls/terrain as clean untextured team-colored silhouettes
+        if (isWallhack && this._xrayQueue && this._xrayQueue.length > 0) {
+            this._inXrayPass = true;
+            gl.enable(gl.DEPTH_TEST);
+            gl.depthFunc(gl.GREATER);
+            gl.depthMask(false);
+            gl.enable(gl.CULL_FACE);
+            gl.cullFace(gl.BACK);
+
+            for (let i = 0; i < this._xrayQueue.length; i++) {
+                const item = this._xrayQueue[i];
+                this.renderSingleMesh(item.mesh, item.modelMatrix, viewMatrix, projectionMatrix, item.teamColor, item.isSelected, 0.0, false);
+            }
+
+            gl.disable(gl.CULL_FACE);
+            gl.depthMask(true);
+            gl.depthFunc(gl.LEQUAL);
+            this._inXrayPass = false;
+        }
+        this._xrayQueue = null;
+
         gl.enable(gl.DEPTH_TEST);
         gl.depthFunc(gl.LEQUAL);
+        gl.depthMask(true);
     }
 
-    renderSingleMesh(gpuMesh, modelMatrix, viewMatrix, projectionMatrix, teamColor, isSelected) {
+    getVehicleTurretRelYawRad(v, vehRotDeg) {
+        if (!v) return 0.0;
+        let bestGunner = null;
+        let bestScore = 0;
+
+        if (v.Passengers && typeof v.Passengers.forEach === "function") {
+            const vName = (v.name || v.templateName || "").toLowerCase();
+            const cleanVName = vName.replace(/(?:_alt\d*|_sp|_ndl)(?=_|$)/g, "");
+            const isStationaryTurret = this._isDeployableOrTurret(vName);
+
+            v.Passengers.forEach((pOrId) => {
+                const p = (typeof pOrId === "object" && pOrId !== null)
+                    ? pOrId
+                    : ((typeof AllPlayers !== "undefined") ? AllPlayers[pOrId] : null);
+                if (!p || !p.isAlive) return;
+
+                const rawSeat = (p.vehicleSeatName || "").toLowerCase();
+                let seat = rawSeat;
+                const matchedPrefix = (vName && seat.startsWith(vName)) ? vName : ((cleanVName && seat.startsWith(cleanVName)) ? cleanVName : "");
+                if (matchedPrefix) {
+                    seat = seat.substring(matchedPrefix.length);
+                    if (seat.startsWith("_")) seat = seat.substring(1);
+                    else if (seat.length === 0) seat = "driver";
+                }
+                const slot = (typeof p.vehicleSlot === "number") ? p.vehicleSlot : -1;
+
+                // Disambiguate main turret gunner from commander roof cupola / bow MG / passenger seats
+                let score = 0;
+                if (seat.includes("gunnercupola")) {
+                    score = 75;
+                } else if (seat === "driver" || (isStationaryTurret && (seat === "" || slot === 0))) {
+                    score = isStationaryTurret ? 80 : 0;
+                } else if (
+                    seat.includes("cupola") ||
+                    seat.includes("mg_gunner") ||
+                    seat.includes("mggunner") ||
+                    seat.includes("machinegunner") ||
+                    seat.includes("hullgun") ||
+                    seat.includes("bowgun") ||
+                    seat.includes("codriver") ||
+                    seat.includes("rightpass") ||
+                    seat.includes("leftpass") ||
+                    seat.includes("passenger") ||
+                    seat.includes("pass_") ||
+                    seat.endsWith("pass") ||
+                    seat.includes("lavett") ||
+                    seat.includes("door")
+                ) {
+                    score = 0;
+                } else if (
+                    seat === "gunner" ||
+                    rawSeat.endsWith("_gunner") ||
+                    seat.includes("turretgunner") ||
+                    seat.includes("_crows") ||
+                    seat.includes("crows") ||
+                    seat.includes("_turret") ||
+                    seat.includes("turret")
+                ) {
+                    score = 100;
+                } else if (seat.includes("gunner") || seat.includes("weaponmount") || seat.includes("50mount") || seat.includes("gunmount")) {
+                    score = 85;
+                } else if (slot === 1) {
+                    score = 70;
+                }
+
+                if (score > bestScore) {
+                    bestScore = score;
+                    bestGunner = p;
+                }
+            });
+        }
+
+        if (bestGunner) {
+            const gunnerRotDeg = (typeof bestGunner.getRotation === "function")
+                ? bestGunner.getRotation()
+                : (bestGunner.rotation || 0);
+            const targetRelRad = -((gunnerRotDeg - vehRotDeg) * Math.PI / 180.0);
+            if (v._turretRelYawRad == null || isNaN(v._turretRelYawRad)) {
+                v._turretRelYawRad = targetRelRad;
+            } else {
+                // Shortest angular delta interpolation to avoid 360-degree wrap-around spin
+                let diff = targetRelRad - v._turretRelYawRad;
+                diff = Math.atan2(Math.sin(diff), Math.cos(diff));
+                v._turretRelYawRad = v._turretRelYawRad + diff * 0.45;
+            }
+        }
+
+        return (v._turretRelYawRad != null && !isNaN(v._turretRelYawRad)) ? v._turretRelYawRad : 0.0;
+    }
+
+    renderSingleMesh(gpuMesh, modelMatrix, viewMatrix, projectionMatrix, teamColor, isSelected, turretRelYawRad = 0.0, allowTexture = true) {
         const gl = renderer3d.gl;
         if (!gl || !gpuMesh) return;
 
+        const wantTex = allowTexture && (typeof options_FactionTextures !== "undefined" ? options_FactionTextures : false);
+        if (wantTex && gpuMesh.modelKey && !gpuMesh.texReady) {
+            this.fetchModelTexAsync(gpuMesh.modelKey);
+        }
+
         if (gpuMesh.isMultiPart) {
-            if (gpuMesh.hull) this.renderSingleMesh(gpuMesh.hull, modelMatrix, viewMatrix, projectionMatrix, teamColor, isSelected);
-            if (gpuMesh.turret) this.renderSingleMesh(gpuMesh.turret, modelMatrix, viewMatrix, projectionMatrix, teamColor, isSelected);
+            if (gpuMesh.hull) {
+                this.renderSingleMesh(gpuMesh.hull, modelMatrix, viewMatrix, projectionMatrix, teamColor, isSelected, 0.0, allowTexture);
+            }
+            if (gpuMesh.turret) {
+                let turretMatrix = modelMatrix;
+                if (Math.abs(turretRelYawRad) > 0.0005) {
+                    const p = gpuMesh.turret.pivot || [0.0, 1.5, 0.0];
+                    turretMatrix = mat4.clone(modelMatrix);
+                    mat4.translate(turretMatrix, turretMatrix, p);
+                    mat4.rotateY(turretMatrix, turretMatrix, turretRelYawRad);
+                    mat4.translate(turretMatrix, turretMatrix, [-p[0], -p[1], -p[2]]);
+                }
+                this.renderSingleMesh(gpuMesh.turret, turretMatrix, viewMatrix, projectionMatrix, teamColor, isSelected, 0.0, allowTexture);
+            }
             return;
         }
 
-        if (!gpuMesh.vertexBuffer || !gpuMesh.indexBuffer) return;
+        const useTex = wantTex && gpuMesh.texReady && gpuMesh.uvBuffer && gpuMesh.glTexture;
+        const activeVBuf = (useTex && gpuMesh.texVertexBuffer) ? gpuMesh.texVertexBuffer : gpuMesh.vertexBuffer;
+        const activeIBuf = (useTex && gpuMesh.texIndexBuffer) ? gpuMesh.texIndexBuffer : gpuMesh.indexBuffer;
+        const activeICount = (useTex && gpuMesh.texIndexCount) ? gpuMesh.texIndexCount : gpuMesh.indexCount;
 
-        // 1. Main Model Pass (Render solid team color)
+        if (!activeVBuf || !activeIBuf) return;
+
+        // Record leaf mesh for next shadow pass (reuses exact world/turret matrix)
+        if (!this._inXrayPass && this._shadowCasters) {
+            this._shadowCasters.push({
+                vBuf: activeVBuf,
+                iBuf: activeIBuf,
+                iCount: activeICount,
+                modelMatrix: modelMatrix
+            });
+        }
+
+        // Queue leaf mesh for occluded-only X-Ray pass (reuses exact world/turret matrix)
+        if (this._xrayQueue && !this._inXrayPass) {
+            this._xrayQueue.push({
+                mesh: gpuMesh,
+                modelMatrix: modelMatrix,
+                teamColor: teamColor,
+                isSelected: isSelected
+            });
+        }
+
+        // 1. Main Model Pass (Render solid team color or lazy-loaded authentic faction/vehicle texture)
         gl.useProgram(this.program);
 
-        gl.bindBuffer(gl.ARRAY_BUFFER, gpuMesh.vertexBuffer);
+        gl.bindBuffer(gl.ARRAY_BUFFER, activeVBuf);
         gl.vertexAttribPointer(this.aVertexPosition, 3, gl.FLOAT, false, 24, 0);
         gl.enableVertexAttribArray(this.aVertexPosition);
 
         gl.vertexAttribPointer(this.aVertexNormal, 3, gl.FLOAT, false, 24, 12);
         gl.enableVertexAttribArray(this.aVertexNormal);
 
+        if (useTex && this.aVertexUV !== -1 && this.aVertexUV !== null) {
+            gl.bindBuffer(gl.ARRAY_BUFFER, gpuMesh.uvBuffer);
+            gl.vertexAttribPointer(this.aVertexUV, 2, gl.FLOAT, false, 8, 0);
+            gl.enableVertexAttribArray(this.aVertexUV);
+
+            gl.activeTexture(gl.TEXTURE0);
+            gl.bindTexture(gl.TEXTURE_2D, gpuMesh.glTexture);
+            if (this.uEntityTex !== null) gl.uniform1i(this.uEntityTex, 0);
+            if (this.uUseTexture !== null) gl.uniform1i(this.uUseTexture, 1);
+        } else {
+            if (this.aVertexUV !== -1 && this.aVertexUV !== null) {
+                gl.disableVertexAttribArray(this.aVertexUV);
+                gl.vertexAttrib2f(this.aVertexUV, 0.0, 0.0);
+            }
+            if (this.uUseTexture !== null) gl.uniform1i(this.uUseTexture, 0);
+        }
+
         gl.uniformMatrix4fv(this.uModelMatrix, false, modelMatrix);
         gl.uniformMatrix4fv(this.uViewMatrix, false, viewMatrix);
         gl.uniformMatrix4fv(this.uProjectionMatrix, false, projectionMatrix);
         gl.uniform3fv(this.uTeamColor, teamColor);
+        if (this.uIsSelected) {
+            gl.uniform1f(this.uIsSelected, isSelected ? 1.0 : 0.0);
+        }
+        if (isSelected) {
+            this.hasSelection = true;
+        }
 
-        gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, gpuMesh.indexBuffer);
-        gl.drawElements(gl.TRIANGLES, gpuMesh.indexCount, gl.UNSIGNED_INT, 0);
+        gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, activeIBuf);
+        gl.drawElements(gl.TRIANGLES, activeICount, gl.UNSIGNED_INT, 0);
 
-        // 2. Selection Outline Pass (Inverted Hull / Front-face Culling)
-        // Culling FRONT faces means only the expanded outer edge of the hull behind the model is drawn!
-        if (isSelected && this.outlineProgram) {
+        if (useTex && this.aVertexUV !== -1 && this.aVertexUV !== null) {
+            gl.disableVertexAttribArray(this.aVertexUV);
+        }
+
+        // 2. Selection Outline Pass (Fallback only if WebGL2 MRT Selection Mask is unavailable)
+        const useMrtMask = (typeof renderer3d !== "undefined" && renderer3d.selectionFboReady);
+        if (isSelected && !useMrtMask && this.outlineProgram) {
             gl.useProgram(this.outlineProgram);
 
             gl.enable(gl.CULL_FACE);
             gl.cullFace(gl.FRONT);
 
-            gl.bindBuffer(gl.ARRAY_BUFFER, gpuMesh.vertexBuffer);
+            gl.bindBuffer(gl.ARRAY_BUFFER, activeVBuf);
             gl.vertexAttribPointer(this.aOutlineVertexPosition, 3, gl.FLOAT, false, 24, 0);
             gl.enableVertexAttribArray(this.aOutlineVertexPosition);
 
@@ -1077,11 +1621,33 @@ class Entities3dRenderer extends Initializable {
             gl.uniformMatrix4fv(this.uOutlineProjectionMatrix, false, projectionMatrix);
             gl.uniform3fv(this.uOutlineColor, this.colorOutline);
 
-            gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, gpuMesh.indexBuffer);
-            gl.drawElements(gl.TRIANGLES, gpuMesh.indexCount, gl.UNSIGNED_INT, 0);
+            gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, activeIBuf);
+            gl.drawElements(gl.TRIANGLES, activeICount, gl.UNSIGNED_INT, 0);
 
             gl.disable(gl.CULL_FACE);
         }
+    }
+
+    drawShadowPass(lightViewProj) {
+        if (!this.initialized || !this.shadowProgram || !this._shadowCasters || this._shadowCasters.length === 0) return;
+        const gl = renderer3d.gl;
+        if (!gl) return;
+
+        gl.useProgram(this.shadowProgram);
+        gl.uniformMatrix4fv(this.sLightSpaceMatrix, false, lightViewProj);
+        gl.enableVertexAttribArray(this.sVertexPosition);
+
+        for (let i = 0; i < this._shadowCasters.length; i++) {
+            const c = this._shadowCasters[i];
+            if (!c || !c.vBuf || !c.iBuf || !c.iCount) continue;
+            gl.uniformMatrix4fv(this.sModelMatrix, false, c.modelMatrix);
+            gl.bindBuffer(gl.ARRAY_BUFFER, c.vBuf);
+            gl.vertexAttribPointer(this.sVertexPosition, 3, gl.FLOAT, false, 24, 0);
+            gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, c.iBuf);
+            gl.drawElements(gl.TRIANGLES, c.iCount, gl.UNSIGNED_INT, 0);
+        }
+
+        gl.disableVertexAttribArray(this.sVertexPosition);
     }
 }
 

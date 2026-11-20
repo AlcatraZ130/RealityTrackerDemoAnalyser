@@ -40,6 +40,22 @@ var options_DrawEmptyVehicles = true
 var options_DrawFlagRadius = true
 var options_DrawKitIcons = true
 var options_DrawDOD = true
+var options_RealTerrain = true
+var options_TerrainDetail = true
+var options_DrawSkybox = true
+var options_3dFog = true
+var options_3dFogOnPlayer = false
+var options_StructureColors = false
+var options_StructureTextures = false
+var options_LodDistancePreset = 2 // 0=Very Low, 1=Low, 2=Balanced, 3=High, 4=Ultra
+var options_LodFade = true
+var options_TreeTextures = false
+var options_BushTextures = false
+var options_FactionTextures = false
+var options_3dShadows = false
+var options_3dAoSsao = false
+var options_3dSsaoQuality = 1 // 0=Fast (1/2 res), 1=Balanced (Full res, 12-tap), 2=High (Full res, 20-tap)
+var options_3dAntiAliasing = 1 // 0=Off, 1=FXAA, 2=MSAA 4x, 3=MSAA 4x + FXAA
 var options_ClampVehiclesToMap = true //Dont draw vehicles outside the map
 var options_DrawVehicleHeight = true
 var options_health_players = true
@@ -75,6 +91,9 @@ function Start()
 function Stop()
 {
 	isPlaying = false;
+	if (!window._autoStoppingKillReplay) {
+		window._killReplayStopTick = null;
+	}
 	onPause()
 }
 
@@ -110,7 +129,23 @@ function update() {
 		updateLogic(frameTime);	
 		animations.update(frameTime);
 		activeRenderer.update(frameTime);
-		activeRenderer.draw();
+				activeRenderer.draw();
+		if (typeof clipRecorder !== 'undefined' && clipRecorder.isRecording && typeof is3DMode !== 'undefined' && is3DMode) {
+			const mapCanvas = document.getElementById("map");
+			const map3d = document.getElementById("map3d");
+			const hud = document.getElementById("map3dHud");
+			if (mapCanvas && map3d && map3d.width > 0 && map3d.height > 0) {
+				if (mapCanvas.width !== map3d.width || mapCanvas.height !== map3d.height) {
+					mapCanvas.width = map3d.width;
+					mapCanvas.height = map3d.height;
+				}
+				const ctx = mapCanvas.getContext("2d");
+				ctx.drawImage(map3d, 0, 0, mapCanvas.width, mapCanvas.height);
+				if (hud && hud.style.display !== "none" && hud.width > 0) {
+					ctx.drawImage(hud, 0, 0, mapCanvas.width, mapCanvas.height);
+				}
+			}
+		}
 	} catch (e) {
 		console.error("Crash in update loop:", e);
 	}
@@ -139,6 +174,21 @@ function updateLogic(frameTime)
 			return
 		
 		interpolation_CurrentAmount--;
+
+		if (window._killReplayStopTick != null && Tick_Current >= window._killReplayStopTick) {
+			interpolation_CurrentAmount = 0;
+			window._killReplayStopTick = null;
+			window._autoStoppingKillReplay = true;
+			Stop();
+			window._autoStoppingKillReplay = false;
+			break;
+		}
+		if (typeof analyserTimeline !== "undefined" && typeof analyserTimeline.checkPlaybackBounds === "function") {
+			if (analyserTimeline.checkPlaybackBounds()) {
+				interpolation_CurrentAmount = 0;
+				break;
+			}
+		}
 	}
 
 	if (typeof updateAllPlayersFocusTracking === "function") {
@@ -160,13 +210,17 @@ const playBarChangeCooldown = 33.33;
 var lastPlayBarChange = 0;
 function onPlayBarChange()
 {
+	if (typeof analyserTimeline !== "undefined" && typeof analyserTimeline.updatePlayheadPosition === "function") {
+		analyserTimeline.updatePlayheadPosition();
+	}
 	const now = performance.now();
 	if (now - lastPlayBarChange < playBarChangeCooldown)
 		return;
 	lastPlayBarChange = now;
 
-	lastPlayBarChange = now;
-	goTo($("#playBar")[0].value)
+	window._killReplayStopTick = null;
+	const targetVal = Number($("#playBar")[0].value);
+	goTo(targetVal);
 	requestUpdate(); 
 }
 
@@ -179,9 +233,26 @@ function onPlaySpeedChange()
 	setSpeed(speed)
 }
 
+function setDirectPlaySpeed(speedVal)
+{
+	const s = Math.max(0.1, Math.min(32.0, Number(speedVal) || 1.0));
+	setSpeed(s);
+	const slider = document.getElementById("playSpeed");
+	if (slider) {
+		slider.value = Math.pow(s, 1.0 / 2.5).toFixed(2);
+	}
+	if (typeof analyserTimeline !== "undefined" && typeof analyserTimeline.updateSpeedButtons === "function") {
+		analyserTimeline.updateSpeedButtons(s);
+	}
+}
+
 function updatePlayBar()
 {
-	$("#playBar")[0].value = Tick_Current
+	const pb = $("#playBar")[0];
+	if (pb) pb.value = Tick_Current;
+	if (typeof analyserTimeline !== "undefined" && typeof analyserTimeline.updateClockDisplay === "function") {
+		analyserTimeline.updateClockDisplay();
+	}
 }
 
 function toggleSubMenu(submenu)
@@ -199,10 +270,35 @@ const TICKS_JUMP_AMOUNT = 10
 var HealthButtonDown = false
 
 var keysDown = new Set();
+function isTextInputElement(target)
+{
+	if (!target)
+		return false;
+	if (target.isContentEditable)
+		return true;
+	const tag = target.tagName;
+	if (tag === "TEXTAREA" || tag === "SELECT")
+		return true;
+	if (tag === "INPUT") {
+		const inputType = (target.type || "text").toLowerCase();
+		return ["text", "search", "url", "email", "password", "number"].includes(inputType);
+	}
+	return false;
+}
+
 function onKeyDown(e)
 {
-	// Return if a modal is open
-	if ($("#addbookmarkComment").dialog("isOpen"))
+	// If a <select> dropdown still holds focus when pressing camera/nav keys, release focus automatically
+	if (e.target && e.target.tagName === "SELECT") {
+		const k = e.which;
+		if (k === 87 || k === 65 || k === 83 || k === 68 || k === 81 || k === 69 || k === 16 || k === 86 || k === 71 || k === 32 || k === 27) {
+			e.target.blur();
+		} else {
+			return;
+		}
+	}
+	// Return if a modal is open or focus is inside a text input
+	if ($("#addbookmarkComment").dialog("isOpen") || isTextInputElement(e.target))
 		return
 
 	keysDown.add(e.which);
@@ -256,6 +352,19 @@ function onKeyDown(e)
 		case 71: //g
 			toggle3dMode()
 			break
+		case 27: // Escape
+			{
+				const bvrModal = document.getElementById("bvrFocusModal");
+				if (bvrModal && bvrModal.style.display !== "none" && typeof closeBVRFocusModal === "function") {
+					closeBVRFocusModal();
+					break;
+				}
+				if (document.querySelector(".hud-popover.open")) {
+					closeTopRightMenus();
+					break;
+				}
+			}
+			return;
 		case 37: // left
 			if (e.shiftKey)
 				goTo(Tick_Current - TICKS_JUMP_AMOUNT_SHIFT)
@@ -289,9 +398,19 @@ function onKeyUp(e)
 			HealthButtonDown = false
 			requestUpdate();
 			break
+		case 86: //v
+			requestUpdate();
+			break
 	}	
 	e.preventDefault();
 }
+
+window.addEventListener("blur", () => {
+	keysDown.clear();
+	HealthButtonDown = false;
+	if (typeof is3DMode !== "undefined" && is3DMode)
+		requestUpdate();
+});
 
 // Sort of a placerholder
 function updateHeader()
@@ -326,6 +445,7 @@ function getTimeStringOfTick(tick)
 }
 function getTimeString(time)
 {
+	if (isNaN(time) || time < 0) time = 0
 	time = Math.floor(time)
 	var sec = time % 60
 	var min = Math.floor(time / 60) % 60
@@ -342,12 +462,130 @@ function checkboxClicked(Checkbox)
 	changeSetting(Checkbox.id, Checkbox.checked);
 }
 
+function set3dAntiAliasing(val) {
+	const idx = Math.max(0, Math.min(3, parseInt(val, 10) || 0));
+	window.options_3dAntiAliasing = idx;
+	try {
+		if (typeof localStorage !== "undefined") {
+			localStorage.setItem("options_3dAntiAliasing", JSON.stringify(idx));
+		}
+	} catch (e) {}
+	const sel = document.getElementById("options_3dAntiAliasing");
+	if (sel) {
+		if (String(sel.value) !== String(idx)) sel.value = String(idx);
+		sel.blur();
+	}
+	requestUpdate();
+}
+
+function setSsaoQuality(val) {
+	const idx = Math.max(0, Math.min(2, parseInt(val, 10) || 0));
+	window.options_3dSsaoQuality = idx;
+	try {
+		if (typeof localStorage !== "undefined") {
+			localStorage.setItem("options_3dSsaoQuality", JSON.stringify(idx));
+		}
+	} catch (e) {}
+	const slider = document.getElementById("options_3dSsaoQuality");
+	if (slider && String(slider.value) !== String(idx)) slider.value = idx;
+	updateSsaoQualityLabel();
+	if (typeof renderer3d !== "undefined" && renderer3d.initialized && typeof renderer3d.setSsaoQuality === "function") {
+		renderer3d.setSsaoQuality(idx);
+	}
+	requestUpdate();
+}
+
+function updateSsaoQualityLabel() {
+	const lbl = document.getElementById("lblSsaoQualVal");
+	if (!lbl) return;
+	const idx = Math.max(0, Math.min(2, parseInt(window.options_3dSsaoQuality, 10) || 0));
+	const names = ["Fast", "Balanced", "High"];
+	const colors = ["#90caf9", "#76ff03", "#ffb74d"];
+	lbl.textContent = names[idx] || "Balanced";
+	lbl.style.color = colors[idx] || "#76ff03";
+}
+
+function setLodDistancePreset(val) {
+	const idx = Math.max(0, Math.min(4, Math.round(parseFloat(val) || 0)));
+	window.options_LodDistancePreset = idx;
+	try {
+		if (typeof localStorage !== "undefined") {
+			localStorage.setItem("options_LodDistancePreset", JSON.stringify(idx));
+		}
+	} catch (e) {}
+	const slider = document.getElementById("options_LodDistancePreset");
+	if (slider && String(slider.value) !== String(idx)) slider.value = idx;
+	updateLodDistanceLabel();
+	if (typeof building3dRenderer !== "undefined" && building3dRenderer.initialized && typeof building3dRenderer.markCullDirty === "function") {
+		building3dRenderer.markCullDirty();
+	}
+	requestUpdate();
+}
+
+function updateLodDistanceLabel() {
+	const lbl = document.getElementById("lblLodDistVal");
+	if (!lbl) return;
+	const idx = Math.max(0, Math.min(4, Math.round(window.options_LodDistancePreset ?? 2)));
+	const t = (typeof getHudI18n === "function") ? getHudI18n() : null;
+	const names = (t && Array.isArray(t.lodDistPresets) && t.lodDistPresets.length === 5)
+		? t.lodDistPresets
+		: ["Very Low", "Low", "Balanced", "High", "Ultra"];
+	const colors = ["#ff8a65", "#ffb74d", "#76ff03", "#40c4ff", "#e040fb"];
+	lbl.textContent = names[idx];
+	lbl.style.color = colors[idx];
+}
+
 // Called when an options checkbox is clicked.
 function changeSetting(settingName, val)
 {
 	window[settingName] = val;
-	if (settingName === "options_DrawDOD" && typeof terrainRenderer !== "undefined" && terrainRenderer.initialized) {
-		terrainRenderer.updateMapTexture();
+	try {
+		if (typeof localStorage !== "undefined" && settingName !== "options_DrawBuildingWireframes" && settingName !== "options_CameraTracking") {
+			localStorage.setItem(settingName, JSON.stringify(val));
+		}
+	} catch (e) {}
+	if (typeof updateHudDependencies === "function") updateHudDependencies();
+	if (settingName === "options_RealTerrain") {
+		if (typeof terrainRenderer !== "undefined" && terrainRenderer.initialized) {
+			terrainRenderer.updateMapTexture();
+		}
+	} else if (settingName === "options_DrawTimeline") {
+		if (typeof analyserTimeline !== "undefined") analyserTimeline.draw();
+	} else if (settingName === "options_DrawDOD" && typeof terrainRenderer !== "undefined" && terrainRenderer.initialized) {
+		if (terrainRenderer.usingRealTerrain) {
+			terrainRenderer.updateDodOverlay();
+		} else {
+			terrainRenderer.updateMapTexture();
+		}
+	} else if (settingName === "options_LodFade") {
+		if (typeof building3dRenderer !== "undefined" && building3dRenderer.initialized && typeof building3dRenderer.markCullDirty === "function") {
+			building3dRenderer.markCullDirty();
+		}
+	} else if (
+		(settingName === "options_StructureTextures" ||
+		 settingName === "options_TreeTextures" ||
+		 settingName === "options_BushTextures") &&
+		typeof building3dRenderer !== "undefined" &&
+		building3dRenderer.initialized
+	) {
+		if (settingName === "options_StructureTextures" && typeof updateHudDependencies === "function") {
+			updateHudDependencies();
+		}
+		const mk = (typeof buildingHeightmap !== "undefined" && buildingHeightmap._mapKey)
+			? buildingHeightmap._mapKey.toLowerCase()
+			: "";
+		if (val && mk && (!building3dRenderer._mapTex3dCache || !building3dRenderer._mapTex3dCache.has(mk) || !building3dRenderer._mapTex3dCache.get(mk).ready)) {
+			if (typeof building3dRenderer._ensureStructureTexturesLoaded === "function") {
+				building3dRenderer._ensureStructureTexturesLoaded(mk);
+			}
+		}
+		if (typeof building3dRenderer.onTextureProfileChanged === "function") {
+			building3dRenderer.onTextureProfileChanged();
+		} else if (typeof building3dRenderer.rebuildBuffers === "function") {
+			building3dRenderer.rebuildBuffers();
+		}
+	} else if (settingName === "options_StructureTextures") {
+		if (typeof updateHudDependencies === "function") updateHudDependencies();
 	}
 
 	requestUpdate();
@@ -358,22 +596,30 @@ var playBarBubble
 $(() => playBarBubble = $("#playBarBubble")[0])
 function showPlayBarBubble()
 {
-	playBarBubble.style.display = "block"
+	if (playBarBubble) playBarBubble.style.display = "block"
 }
 
 function setPlayBarBubble(e)
 {
-	var Position = e.offsetX // Pixels of mouse from left side of bar
-	var Tick = Math.max(Math.round((Position / e.target.clientWidth) * parseInt(e.target["max"])), 0)
-	var StringToShow = getTimeStringOfTick(Tick) // String to show in bubble
+	if (typeof analyserTimeline !== "undefined" && typeof analyserTimeline.updateHoverBubble === "function") {
+		analyserTimeline.updateHoverBubble(e);
+		return;
+	}
+	if (!playBarBubble || !e || !e.target) return;
+	const width = Math.max(1, e.target.clientWidth || 1);
+	const Position = Math.max(0, Math.min(width, e.offsetX));
+	const minVal = parseInt(e.target.min || "0", 10) || 0;
+	const maxVal = parseInt(e.target.max || "1", 10) || 1;
+	const Tick = Math.max(0, Math.round(minVal + (Position / width) * (maxVal - minVal)));
+	const StringToShow = getTimeStringOfTick(Tick);
 
-	playBarBubble.style.left = (Position - 22) + "px"
-	playBarBubble.innerHTML = StringToShow
+	playBarBubble.style.left = Math.max(4, Math.min(width - 48, Position - 22)) + "px";
+	playBarBubble.textContent = StringToShow;
 }
 
 function hidePlayBarBubble()
 {
-	playBarBubble.style.display = "none"
+	if (playBarBubble) playBarBubble.style.display = "none"
 }
 
 const VIEWPORT_2D = 0;
@@ -388,7 +634,7 @@ function showViewportModeToast(msg) {
 	if (!toast) {
 		toast = document.createElement("div");
 		toast.id = "viewportModeToast";
-		toast.style.cssText = "position: absolute; top: 50px; left: 50%; transform: translateX(-50%); background: rgba(10, 20, 25, 0.90); color: #00e5ff; border: 1px solid #00e5ff; border-radius: 4px; padding: 6px 16px; font-weight: bold; font-size: 13px; z-index: 1000; pointer-events: none; transition: opacity 0.4s ease; box-shadow: 0 0 12px rgba(0,229,255,0.4); text-shadow: 0 0 4px rgba(0,229,255,0.6);";
+		toast.style.cssText = "position: absolute; top: 55px; left: 50%; transform: translateX(-50%); background: rgba(23, 35, 34, 0.93); color: rgb(239, 238, 241); border: 1px solid #555; border-radius: 2px; padding: 5px 14px; font-weight: bold; font-size: 13px; z-index: 1000; pointer-events: none; transition: opacity 0.3s ease;";
 		document.body.appendChild(toast);
 	}
 	toast.textContent = msg;
@@ -396,52 +642,209 @@ function showViewportModeToast(msg) {
 	if (window._toastTimer) clearTimeout(window._toastTimer);
 	window._toastTimer = setTimeout(() => {
 		if (toast) toast.style.opacity = "0";
-	}, 1600);
+	}, 1500);
+}
+
+function closeTopRightMenus() {
+	document.querySelectorAll(".hud-popover.open").forEach((el) => el.classList.remove("open"));
+	document.querySelectorAll(".hud-menu-trigger.active").forEach((el) => el.classList.remove("active"));
+}
+
+function toggleTopRightMenu(popoverId, btnEl) {
+	const target = document.getElementById(popoverId);
+	if (!target) return;
+	const wasOpen = target.classList.contains("open");
+	closeTopRightMenus();
+	if (!wasOpen) {
+		target.classList.add("open");
+		if (btnEl) btnEl.classList.add("active");
+	}
+}
+
+function switchAnalyserTab(tabKey, btnEl) {
+	const root = document.getElementById("analyserDiv");
+	if (!root) return;
+	root.querySelectorAll(".analyser-tab-btn").forEach((b) => b.classList.remove("active"));
+	root.querySelectorAll(".analyser-tab-pane").forEach((p) => p.classList.remove("active"));
+	if (btnEl) btnEl.classList.add("active");
+	const pane = document.getElementById("analyserTab_" + tabKey);
+	if (pane) pane.classList.add("active");
+}
+
+function updateHudDependencies() {
+	const realTerrain = !!window.options_RealTerrain;
+	const detailCheckbox = document.getElementById("options_TerrainDetail");
+	if (detailCheckbox) detailCheckbox.disabled = !realTerrain;
+	const depTerrain = document.getElementById("depTerrainDetail");
+	if (depTerrain) depTerrain.classList.toggle("is-disabled-dep", !realTerrain);
+
+	const fogOn = !!window.options_3dFog;
+	const fogPlayerCb = document.getElementById("options_3dFogOnPlayer");
+	if (fogPlayerCb) fogPlayerCb.disabled = !fogOn;
+	const depFogPlayer = document.getElementById("depFogPlayerGroup");
+	if (depFogPlayer) depFogPlayer.classList.toggle("is-disabled-dep", !fogOn);
+
+	const visionCone = !!window.options_DrawVisionCone;
+	const depVision = document.getElementById("depVisionConeGroup");
+	if (depVision) depVision.classList.toggle("is-disabled-dep", !visionCone);
+	const coneLosCb = document.getElementById("options_VisionConeRespectsLOS");
+	if (coneLosCb) coneLosCb.disabled = !visionCone;
+	const coneXrayCb = document.getElementById("options_VisionConeXRay");
+	if (coneXrayCb) coneXrayCb.disabled = !visionCone;
+	const qualDisabled = !visionCone || !window.options_VisionConeRespectsLOS;
+	for (const qId of ["btnConeQualNormal", "btnConeQualHigh", "btnConeQualUltra", "btnConeQualExtreme"]) {
+		const qb = document.getElementById(qId);
+		if (qb) qb.disabled = qualDisabled;
+	}
+
+	const threatActive = !!window.options_DrawThreatLasers || !!window.options_DrawFlankChronometer;
+	const depThreat = document.getElementById("depThreatLasersGroup");
+	if (depThreat) depThreat.classList.toggle("is-disabled-dep", !threatActive);
+	const coverCb = document.getElementById("options_ConeRespectsTerrain");
+	if (coverCb) coverCb.disabled = !threatActive;
+
+	const structTex = !!window.options_StructureTextures;
+	const depStruct = document.getElementById("depStructureTexGroup");
+	if (depStruct) depStruct.classList.toggle("is-disabled-dep", !structTex);
+	const lodSlider = document.getElementById("options_LodDistancePreset");
+	if (lodSlider) lodSlider.disabled = !structTex;
+	const lodFadeCb = document.getElementById("options_LodFade");
+	if (lodFadeCb) lodFadeCb.disabled = !structTex;
+	updateLodDistanceLabel();
+
+	const ssaoOn = !!window.options_3dAoSsao;
+	const depSsao = document.getElementById("depSsaoQualityGroup");
+	if (depSsao) depSsao.classList.toggle("is-disabled-dep", !ssaoOn);
+	const ssaoSlider = document.getElementById("options_3dSsaoQuality");
+	if (ssaoSlider) ssaoSlider.disabled = !ssaoOn;
+	updateSsaoQualityLabel();
+}
+
+function getHudI18n() {
+	if (typeof ANALYSER_I18N !== "undefined" && typeof currentAnalyserLang !== "undefined") {
+		return ANALYSER_I18N[currentAnalyserLang] || ANALYSER_I18N.EN;
+	}
+	return null;
+}
+
+function updateViewportModeButton() {
+	const t = getHudI18n();
+	const labelFree = (t && t.mode3dBtnFree) || "3D FREE";
+	const labelTop = (t && t.mode3dBtnTop) || "3D TOP";
+	const title2d = (t && t.mode2dTitle) || "Viewport: 2D Map — Click or press [G] for 3D Free Camera";
+	const titleFree = (t && t.mode3dFreeTitle) || "Viewport: 3D Free Camera — Click or press [G] for 3D Top-Down";
+	const titleTop = (t && t.mode3dTopTitle) || "Viewport: 3D Top-Down — Click or press [G] to return to 2D Map";
+
+	const btn = document.getElementById("btnViewportMode");
+	if (btn) {
+		btn.classList.remove("mode-2d", "mode-3d-free", "mode-3d-topdown");
+		if (viewportMode === VIEWPORT_2D) {
+			btn.classList.add("mode-2d");
+			btn.textContent = "3D";
+			btn.title = title2d;
+		} else if (viewportMode === VIEWPORT_3D_FREE) {
+			btn.classList.add("mode-3d-free");
+			btn.textContent = labelFree;
+			btn.title = titleFree;
+		} else if (viewportMode === VIEWPORT_3D_TOPDOWN) {
+			btn.classList.add("mode-3d-topdown");
+			btn.textContent = labelTop;
+			btn.title = titleTop;
+		}
+	}
+
+	const pill = document.getElementById("lbl3DModeStatusPill");
+	if (pill) {
+		if (viewportMode === VIEWPORT_2D) pill.textContent = "2D";
+		else if (viewportMode === VIEWPORT_3D_FREE) pill.textContent = labelFree;
+		else if (viewportMode === VIEWPORT_3D_TOPDOWN) pill.textContent = labelTop;
+	}
+
+	const banner = document.getElementById("banner2dHint");
+	if (banner) {
+		banner.style.display = is3DMode ? "none" : "flex";
+	}
 }
 
 function toggle3dMode() {
 	const hudCanvas = document.getElementById("map3dHud");
+	const t = getHudI18n();
 	
 	// Cycle: 0 (2D Canvas) -> 1 (3D Free Camera) -> 2 (3D Top-Down) -> 0 (2D Canvas)
 	viewportMode = (viewportMode + 1) % 3;
 	is3DMode = (viewportMode !== VIEWPORT_2D);
 
+	const isRec = (typeof clipRecorder !== 'undefined' && clipRecorder.isRecording);
+
 	if (viewportMode === VIEWPORT_2D) {
 		activeRenderer = renderer2d;
+		if (typeof renderer3d !== "undefined" && renderer3d) {
+			renderer3d.fov = renderer3d.baseFov;
+		}
 		$("#map")[0].style.display = "block";
+		$("#map")[0].style.zIndex = "";
 		$("#map3d")[0].style.display = "none";
 		if (hudCanvas) hudCanvas.style.display = "none";
+		showViewportModeToast((t && t.mode2dToast) || "2D Map");
+		updateViewportModeButton();
 		requestUpdate();
 	} else if (viewportMode === VIEWPORT_3D_FREE) {
 		if (!renderer3d.initialized) {
 			if (!renderer3d.init()) {
 				console.log("3D WebGL initialization failed");
+				viewportMode = VIEWPORT_2D;
+				is3DMode = false;
+				updateViewportModeButton();
 				return;
 			}
 		}
 		activeRenderer = renderer3d;
 		renderer3d.isTopDown = false;
-		$("#map")[0].style.display = "none";
+		if (isRec) {
+			$("#map")[0].style.display = "block";
+			$("#map")[0].style.zIndex = "0";
+			$("#map3d")[0].style.zIndex = "1";
+			if (hudCanvas) hudCanvas.style.zIndex = "2";
+		} else {
+			$("#map")[0].style.display = "none";
+		}
 		$("#map3d")[0].style.display = "block";
 		if (hudCanvas) hudCanvas.style.display = "block";
+		showViewportModeToast((t && t.mode3dFreeToast) || "3D Free Camera");
+		updateViewportModeButton();
 		renderer3d.draw();
 	} else if (viewportMode === VIEWPORT_3D_TOPDOWN) {
 		if (!renderer3d.initialized) {
 			if (!renderer3d.init()) {
 				console.log("3D WebGL initialization failed");
+				viewportMode = VIEWPORT_2D;
+				is3DMode = false;
+				updateViewportModeButton();
 				return;
 			}
 		}
 		activeRenderer = renderer3d;
-		renderer3d.setTopDownView();
-		$("#map")[0].style.display = "none";
+		renderer3d.isTopDown = true;
+		if (isRec) {
+			$("#map")[0].style.display = "block";
+			$("#map")[0].style.zIndex = "0";
+			$("#map3d")[0].style.zIndex = "1";
+			if (hudCanvas) hudCanvas.style.zIndex = "2";
+		} else {
+			$("#map")[0].style.display = "none";
+		}
 		$("#map3d")[0].style.display = "block";
 		if (hudCanvas) hudCanvas.style.display = "block";
+		showViewportModeToast((t && t.mode3dTopToast) || "3D Top-Down");
+		updateViewportModeButton();
 		renderer3d.draw();
 	}
 }
-
-$(() => activeRenderer = renderer2d);
+$(() => {
+	activeRenderer = renderer2d;
+	updateViewportModeButton();
+	updateHudDependencies();
+});
 
 //TODO menu styles
 $( function() {$( "#menuList" ).menu(

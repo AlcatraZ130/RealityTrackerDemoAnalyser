@@ -153,10 +153,10 @@ function vehicleTable_WriteOne(id)
 // finds the first table that has id greater than current and uses insertBefore on it
 function vehicleTable_AppendSorted(team, table)
 {
-	// Find the first element with higher vehicleID
+	// Find the first element with higher vehicleID (numeric compare)
 	var list = $("#Team" + team + "Vehicles .vehicleTable").filter((i, e) =>
 	{
-		return e.getAttribute("vehicleid") > table.getAttribute("vehicleid")
+		return Number(e.getAttribute("vehicleid")) > Number(table.getAttribute("vehicleid"))
 	})
 	if (list.length != 0)
 		$("#Team" + team + "Vehicles")[0].insertBefore(table, list[0]);

@@ -16,53 +16,59 @@
 	<script src="js/utils/initializable.js"></script>
 	<script src="js/utils/downloadmanager.js"></script>
 	<script src="js/animations.js"></script>
-	<script src="js/canvas.js?v=2.3_clean_proj_1787755000"></script>
+	<script src="js/canvas.js?v=2.4_uav_turret_fix"></script>
 	<script src="js/maprenderer.js"></script>
 	<script src="js/atlas.js"></script>
 	<script src="js/bookmark.js"></script>
 	<script src="js/events.js"></script>
-	<script src="js/selection.js"></script>
+	<script src="js/selection.js?v=2.2_hash_always"></script>
 	<script src="js/scoreboard.js"></script>
 	<script src="js/vehicletables.js"></script>
-	<script src="js/loading.js"></script>
-	<script src="js/main.js"></script>
+	<script src="js/loading.js?v=3.2_select_restore"></script>
+	<script src="js/main.js?v=4.6_lod_verylow"></script>
 	<script src="js/serverinfo.js"></script>
-	<script src="js/draggingandzoom.js?v=2.3_topdown_smooth_zoom_1787795000"></script>
-	<script src="js/parser.js"></script>
+	<script src="js/draggingandzoom.js?v=3.4_zoom_3deg"></script>
+	<script src="js/parser.js?v=3.3_uav_init_air"></script>
 	<script src="js/protocol.js"></script>
 	<script src="js/killlines.js"></script>
 	<script src="js/helperfunctions.js"></script>
 	<script src="js/eventdialog.js"></script>
 	<script src="js/highlightarea.js"></script>
 	<!-- Footprint vector databases (86 maps, 2692 silhouettes) -->
-	<script src="js/map_statics_db.js"></script>
-	<script src="js/mesh_2d_footprints.js"></script>
-	<script src="js/buildingheightmap.js?v=2.3_poly_z_fixed_1787770000"></script>
+	<script src="js/map_statics_db.js?v=pr_upd_audit_fixes"></script>
+	<script src="js/mesh_2d_footprints.js?v=2.6_audit_fixes"></script>
+	<script src="js/buildingheightmap.js?v=3.5_vstart_fix"></script>
 	<script src="js/ordershistory.js"></script>
 	<script src="js/playerhistory.js"></script>
-	<script src="js/demoanalyser.js?v=2.6_clean_buttons_1787791000"></script>
-	<script src="js/flankchrono.js"></script>
-	<script src="js/analysertimeline.js"></script>
-	<script src="js/analyserpreload.js"></script>
+	<script src="js/demoanalyser.js?v=4.9.2"></script>
+	<script src="js/flankchrono.js?v=2.0_tactical_hud"></script>
+	<script src="js/analysertimeline.js?v=2.7_playhead_sync"></script>
+	<script src="js/analyserpreload.js?v=2.1_tick_align"></script>
+	<script src="js/cliprecorder.js?v=10.5_i18n_tip"></script>
 	<!-- <script src="js/immutable.min.js"></script> -->
 	<script src="js/zlib_inflate.js"></script>
 	<script src="js/3d/gl-matrix.js"></script>
-	<script src="js/3d/heightmap.js"></script>
-	<script src="js/3d/terrain.js?v=2.0_depth_pass_1787772000"></script>
-	<script src="js/3d/buildings3d.js?v=4.2_solid_world_1787786000"></script>
+	<script src="js/3d/heightmap.js?v=2.0_bilinear_fix"></script>
+	<script src="js/3d/sky_db.js?v=1.3_fog_layers"></script>
+	<script src="js/3d/skybox.js?v=1.4"></script>
+	<script src="js/3d/terrain_detail_db.js?v=pr_upd_phase2"></script>
+	<script src="js/3d/terrain.js?v=2.9"></script>
+	<script src="js/3d/foliage_volumes.js?v=1.4"></script>
+	<script src="js/3d/buildings3d.js?v=13.9"></script>
 	<script src="js/3d/geometry2d.js"></script>
 	<script src="js/3d/geometry.js"></script>
-	<script src="js/3d/pr_maps_database.js"></script>
-	<script src="js/3d/pr_water_database.js?v=2.0_accurate_sea_levels_1787756500"></script>
-	<script src="js/3d/vehicle_dictionary.js?v=11.0_restored_clean_1787822000"></script>
-	<script src="js/3d/entities3d.js?v=11.0_restored_clean_1787822000"></script>
-	<script src="js/3d/lines3d.js?v=9.4_ground_contact_fixed_1787787000"></script>
-	<script src="js/3d/renderer3d.js?v=6.0_unlimited_view_distance_1787825000"></script>
-	<script src="js/3d/hud3d.js?v=2.7_ground_contact_fixed_1787787000"></script>
+	<script src="js/3d/pr_maps_database.js?v=pr_upd_1794574015"></script>
+	<script src="js/3d/pr_water_database.js?v=pr_upd_1794574015"></script>
+	<script src="js/3d/vehicle_dictionary.js?v=3.3_deployables_bipods"></script>
+	<script src="js/3d/entities3d.js?v=17.1_shadow_pcf"></script>
+	<script src="js/3d/water3d.js?v=1.2"></script>
+	<script src="js/3d/lines3d.js?v=10.4_no_fan_dod"></script>
+	<script src="js/3d/renderer3d.js?v=8.9"></script>
+	<script src="js/3d/hud3d.js?v=3.9_fob_toggle"></script>
 	<script>if (window.module) module = window.module;</script>
 	<!-- <script src="js/init_prt.js"></script> -->
 	<link href="https://fonts.googleapis.com/css?family=Open+Sans|Roboto" rel="stylesheet">
-	<link rel="stylesheet" type="text/css" href="style.css">
+	<link rel="stylesheet" type="text/css" href="style.css?v=3.6_playhead_2px">
 </head>
 	<body>
 		<div id="downloads">
@@ -88,7 +94,6 @@
 			</div>
 		</div>
 		<div id="floaters" class="hideAtStart">
-			<div id="headerInner"></div>
 			<div id="selection"></div>
 			<div id="serverinfoContainer">
 				<table id="serverinfoTable">
@@ -292,7 +297,6 @@
 					</div>
 				</div>
 			</div>
-		</div>
 			<div id="vehiclesContainer">
 				<div id="vehicles">
 					<div id="Team2Vehicles">
@@ -325,240 +329,380 @@
 					<ul>
 						<li><div onclick="toggleSubMenu('scoreBoard')">ScoreBoard (Z)</div></li>
 						<li><div onclick="toggleSubMenu('kills')">Kills (X)</div></li>
-						<li><div onclick="toggleSubMenu('chat')">Chat (T)</div></li>
+						<li><div onclick="toggleSubMenu('chat')">Chat</div></li>
 						<li><div onclick="toggleSubMenu('revives')">Revives (R)</div></li>
 						<li><div onclick="toggleSubMenu('kitAllocations')">Kit Allocations (K)</div></li>
 						<li><div onclick="toggleSubMenu('vehicles')">Active Vehicles (C)</div></li>
-						<li><div onclick="toggleSubMenu('vehicleDestroyers')">Vehicles Destroyed (D)</div></li>
+						<li><div onclick="toggleSubMenu('vehicleDestroyers')">Vehicles Destroyed</div></li>
 						<li><div onclick="toggleSubMenu('serverinfo')">Server Info</div></li>
 					</ul>
 				</li>
 			</ul>
-			<div id="toggleBookmarks" class="subMenuToggle" onclick="toggleSubMenu('bookmarks')">
-				<img src=".\Graphics\UI\star.png">
-			</div>
-			<div id="copyLink" class="subMenuToggle" onclick="copyTrackerLink()">
-				<!-- From Microsoft: https://github.com/microsoft/fluentui-system-icons -->
-				<svg width="30px" height="30px" viewBox="0 0 24 24" version="1.1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
-					<!-- Generator: Sketch 59.1 (86144) - https://sketch.com -->
-					<title>Copy link with timestamp</title>
-					<desc>Created with Sketch.</desc>
-					<g id="🔍-Product-Icons" stroke="none" stroke-width="1" fill="none" fill-rule="evenodd">
-						<g id="ic_fluent_copy_24_regular" fill="#FFFFFF" fill-rule="nonzero">
-							<path d="M5.50280381,4.62704038 L5.5,6.75 L5.5,17.2542087 C5.5,19.0491342 6.95507456,20.5042087 8.75,20.5042087 L17.3662868,20.5044622 C17.057338,21.3782241 16.2239751,22.0042087 15.2444057,22.0042087 L8.75,22.0042087 C6.12664744,22.0042087 4,19.8775613 4,17.2542087 L4,6.75 C4,5.76928848 4.62744523,4.93512464 5.50280381,4.62704038 Z M17.75,2 C18.9926407,2 20,3.00735931 20,4.25 L20,17.25 C20,18.4926407 18.9926407,19.5 17.75,19.5 L8.75,19.5 C7.50735931,19.5 6.5,18.4926407 6.5,17.25 L6.5,4.25 C6.5,3.00735931 7.50735931,2 8.75,2 L17.75,2 Z M17.75,3.5 L8.75,3.5 C8.33578644,3.5 8,3.83578644 8,4.25 L8,17.25 C8,17.6642136 8.33578644,18 8.75,18 L17.75,18 C18.1642136,18 18.5,17.6642136 18.5,17.25 L18.5,4.25 C18.5,3.83578644 18.1642136,3.5 17.75,3.5 Z" id="🎨-Color"></path>
+			<div id="topRightToolbar">
+				<div id="headerInner"></div>
+				<button id="btnViewportMode" type="button" class="mode-2d" onclick="toggle3dMode()" title="Cycle View Mode: 2D -> 3D Free -> 3D Top-Down [G]">3D</button>
+				<div id="copyLink" class="subMenuToggle" onclick="copyTrackerLink()" title="Copy link with timestamp">
+					<!-- From Microsoft: https://github.com/microsoft/fluentui-system-icons -->
+					<svg width="24px" height="24px" viewBox="0 0 24 24" version="1.1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+						<title>Copy link with timestamp</title>
+						<g stroke="none" stroke-width="1" fill="none" fill-rule="evenodd">
+							<g fill="#FFFFFF" fill-rule="nonzero">
+								<path d="M5.50280381,4.62704038 L5.5,6.75 L5.5,17.2542087 C5.5,19.0491342 6.95507456,20.5042087 8.75,20.5042087 L17.3662868,20.5044622 C17.057338,21.3782241 16.2239751,22.0042087 15.2444057,22.0042087 L8.75,22.0042087 C6.12664744,22.0042087 4,19.8775613 4,17.2542087 L4,6.75 C4,5.76928848 4.62744523,4.93512464 5.50280381,4.62704038 Z M17.75,2 C18.9926407,2 20,3.00735931 20,4.25 L20,17.25 C20,18.4926407 18.9926407,19.5 17.75,19.5 L8.75,19.5 C7.50735931,19.5 6.5,18.4926407 6.5,17.25 L6.5,4.25 C6.5,3.00735931 7.50735931,2 8.75,2 L17.75,2 Z M17.75,3.5 L8.75,3.5 C8.33578644,3.5 8,3.83578644 8,4.25 L8,17.25 C8,17.6642136 8.33578644,18 8.75,18 L17.75,18 C18.1642136,18 18.5,17.6642136 18.5,17.25 L18.5,4.25 C18.5,3.83578644 18.1642136,3.5 17.75,3.5 Z"></path>
+							</g>
 						</g>
-					</g>
-				</svg>
-			</div>
-			<div id="mapOptions">
-				<label id="mapOptionsButton" class="cursorPointer">
-					<input type="checkbox" id="mapOtionsInput">
-					<div id="mapOptionsDiv">
-						<input type="checkbox" checked="" id="options_DrawDOD" onclick="checkboxClicked(this)">
-						DoD
-						<br>
-						<input type="checkbox" checked="" id="options_DrawEmptyVehicles" onclick="checkboxClicked(this)">
-						Empty vehicles
-						<br>
-						<input type="checkbox" checked="" id="options_DrawFlagRadius" onclick="checkboxClicked(this)">
-						Flag radius
-						<br>
-						<input type="checkbox" checked="" id="options_DrawKillLines" onclick="checkboxClicked(this)">
-						Kill lines
-						<br>
-						<input type="checkbox" checked="" id="options_DrawKitIcons" onclick="checkboxClicked(this)">
-						Kit icons & Vehicle icons
-						<br>
-						<input type="checkbox" checked="" id="options_ClampVehiclesToMap" onclick="checkboxClicked(this)">
-						Clamp vehicles in map
-						<br>
-						<input type="checkbox" checked="" id="options_DrawVehicleHeight" onclick="checkboxClicked(this)">
-						Show air vehicle height
-						<br>
-						<input type="checkbox" checked="" id="options_health_vehicles" onclick="checkboxClicked(this)">
-						Vehicle Health
-						<br>
-						<input type="checkbox" checked="" id="options_health_players" onclick="checkboxClicked(this)">
-						Player Health
-						<br>
-						<input type="checkbox" checked="" id="options_drawAllOrderIcons" onclick="checkboxClicked(this)">
-						Orders
-						<br>
-						<input type="checkbox" checked="" id="options_Interpolation" onclick="checkboxClicked(this)" title="Interpola suavemente las posiciones y ángulos entre ticks. En demos de alta frecuencia se puede apagar para ver los frames 100% reales del servidor.">
-						Interpolation (Smooth) <span id="lblDemoTickrateBadge" style="font-size: 10px; font-weight: bold; color: #38bdf8; margin-left: 2px; padding: 1px 4px; background: rgba(56, 189, 248, 0.12); border-radius: 3px;">[3.0 Hz]</span>
-						<br>
-						<input type="checkbox" id="options_UseFallbackRenderer" onclick="checkboxClicked(this)">
-						Use Fallback Renderer
-						<br>
-						<input id="options_canvasScale" type="range" min="0.4" max="3.0" value="1.0" step="0.02" oninput="UIScaleChange()">
-						UI Scale
-						<br>
-						<hr>
-						<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; margin-top: 4px;">
-							<b id="lblDemoAnalyserHeader">Demo Analyser</b>
+					</svg>
+				</div>
+				<div id="toggleBookmarks" class="subMenuToggle" onclick="toggleSubMenu('bookmarks')" title="Bookmarks">
+					<img src=".\Graphics\UI\star.png">
+				</div>
+
+				<!-- Menu 1: Map & HUD Options -->
+				<div id="mapOptions" class="hud-menu-wrapper">
+					<button id="btnMenuMap" type="button" class="hud-menu-trigger" onclick="toggleTopRightMenu('mapOptionsDiv', this)" title="Map & HUD Options">
+						<img src=".\Graphics\UI\stacks.png">
+					</button>
+					<div id="mapOptionsDiv" class="hud-popover">
+						<div class="hud-popover-header">
+							<span id="lblMapMenuTitle">Map &amp; HUD Options</span>
 							<div style="display: flex; gap: 3px;">
-								<button id="btnLangEN" type="button" onclick="setAnalyserLanguage('EN')" style="background: #00e5ff; color: #000; border: 1px solid #00e5ff; border-radius: 3px; font-weight: bold; font-size: 9px; padding: 1px 5px; cursor: pointer; transition: all 0.15s ease;">EN</button>
-								<button id="btnLangES" type="button" onclick="setAnalyserLanguage('ES')" style="background: rgba(255,255,255,0.08); color: #bbb; border: 1px solid #555; border-radius: 3px; font-weight: bold; font-size: 9px; padding: 1px 5px; cursor: pointer; transition: all 0.15s ease;">ES</button>
-								<button id="btnLangPT" type="button" onclick="setAnalyserLanguage('PT')" style="background: rgba(255,255,255,0.08); color: #bbb; border: 1px solid #555; border-radius: 3px; font-weight: bold; font-size: 9px; padding: 1px 5px; cursor: pointer; transition: all 0.15s ease;">PT</button>
+								<button type="button" class="hud-lang-btn hud-mini-btn active" data-lang="EN" onclick="setAnalyserLanguage('EN')">EN</button>
+								<button type="button" class="hud-lang-btn hud-mini-btn" data-lang="ES" onclick="setAnalyserLanguage('ES')">ES</button>
+								<button type="button" class="hud-lang-btn hud-mini-btn" data-lang="PT" onclick="setAnalyserLanguage('PT')">PT</button>
 							</div>
 						</div>
-						<label title="Draws a field of view cone representing the player's screen. If an enemy is inside this cone, they are considered visible."><input type="checkbox" id="options_DrawVisionCone" onclick="checkboxClicked(this)"> Vision Cone</label><br>
-						<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 2px;">
-							<label title="Deforms and casts the vision cone dynamically against building walls and terrain elevations in real-time."><input type="checkbox" id="options_VisionConeRespectsLOS" onclick="checkboxClicked(this)"> Cone with LOS</label>
-							<div style="display: flex; gap: 2px;">
-								<button id="btnConeQualNormal" type="button" onclick="setVisionConeQuality('normal')" style="background: #00e5ff; color: #000; border: 1px solid #00e5ff; border-radius: 3px; font-weight: bold; font-size: 9px; padding: 1px 4px; cursor: pointer; transition: all 0.15s ease;" title="Normal Quality (64 Steps, 512x128 Depth Map)">Normal</button>
-								<button id="btnConeQualHigh" type="button" onclick="setVisionConeQuality('high')" style="background: rgba(255,255,255,0.08); color: #bbb; border: 1px solid #555; border-radius: 3px; font-weight: bold; font-size: 9px; padding: 1px 4px; cursor: pointer; transition: all 0.15s ease;" title="High Quality (128 Steps, 1024x256 Depth Map)">High</button>
-								<button id="btnConeQualUltra" type="button" onclick="setVisionConeQuality('ultra')" style="background: rgba(255,255,255,0.08); color: #bbb; border: 1px solid #555; border-radius: 3px; font-weight: bold; font-size: 9px; padding: 1px 4px; cursor: pointer; transition: all 0.15s ease;" title="Ultra Quality (256 Steps, 2048x512 Depth Map)">Ultra</button>
-								<button id="btnConeQualExtreme" type="button" onclick="setVisionConeQuality('extreme')" style="background: rgba(255,255,255,0.08); color: #bbb; border: 1px solid #555; border-radius: 3px; font-weight: 900; font-size: 9px; padding: 1px 4px; cursor: pointer; transition: all 0.15s ease;" title="EXTREME Quality (512 Steps, 4096x1024 4K Depth Map)">Extreme</button>
-							</div>
-						</div>
-						<label title="Draws a main blue gaze laser in the player's view direction. The laser turns red whenever the player is aiming at an enemy that is blocked by terrain or buildings. Also draws orange threat lasers to enemies that are visible inside the vision cone. Disabling this option also hides the gaze laser."><input type="checkbox" id="options_DrawThreatLasers" onclick="checkboxClicked(this)"> Threat Lasers</label><br>
-						<label title="Makes the vision cone, gaze laser, and threat lasers respect terrain and building line-of-sight."><input type="checkbox" id="options_ConeRespectsTerrain" onclick="checkboxClicked(this)"> Terrain/Building LOS</label><br>
-						<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 2px;">
-							<label title="Extends the gaze laser beyond the map's view range/fog distance to analyze aiming focus toward targets out of visual rendering range."><input type="checkbox" id="options_DrawBVRLaser" onclick="checkboxClicked(this)"> BVR Laser</label>
-							<button type="button" id="btnBVRFocusAlerts" onclick="openBVRFocusModal()" style="background: #00e5ff; color: #000; border: 1px solid #00e5ff; border-radius: 3px; font-weight: bold; font-size: 9px; padding: 1px 5px; cursor: pointer; transition: all 0.15s ease;" title="Ver escalafón de tiempos de enfoque de todos los jugadores">BVR Timer List</button>
-						</div>
-						<label title="Tracks enemy FOBs, players, and vehicles marked by squad leader orders within time and distance thresholds and displays a red Spotted ring."><input type="checkbox" id="options_DrawSpottedIndicators" onclick="checkboxClicked(this)"> Orders & Spotted Tracking</label><br>
-						<label title="Creates a 150m radius zone around the selected player and shows a timer in seconds above nearby enemies to measure response time to threats."><input type="checkbox" id="options_DrawFlankChronometer" onclick="checkboxClicked(this)"> Engagement Timer</label><br>
-						<label title="Displays a timeline track of engagements and events for the selected player at the bottom of the screen (Green: kills, Orange: deaths, Red: kills without LOS)."><input type="checkbox" id="options_DrawTimeline" onclick="checkboxClicked(this)"> Timeline</label><br>
-						<label title="Shows footstep sound radii based on player speed (12m crouch, 20m walk, 35m sprint) and vehicle engine sound states (idle, moving, ignition)."><input type="checkbox" id="options_DrawMovementSoundAuras" onclick="checkboxClicked(this)"> Movement Sound Radii</label><br>
-						<label title="Displays expanding sound wave shockwaves when players shoot or hit targets (300m small arms, 750m 30mm cannons, 1500m tank main guns)."><input type="checkbox" id="options_DrawShootingSoundShockwaves" onclick="checkboxClicked(this)"> Shooting Sound Shockwaves</label><br>
-						<div id="mapViewRangeContainer" style="display: none; font-size: 11px; color: #aaa; margin-top: 5px;" title="View range extracted from game level files. Due to fog, shapes are typically discernible 100-200m before max view range on large maps (e.g. 1300m), scaling down to ~50-100m less on smaller maps (e.g. 600m).">
-							<span id="valMapViewRangeText"></span>
-						</div>
-						<div id="engagementTimerRangeContainer" style="display: none; font-size: 11px; color: #aaa; margin-top: 2px;" title="Adaptive engagement timer radius based on map size: 50m for 1km maps, 100m for 2km maps, 150m for 4km/8km maps.">
-							<span id="valEngagementTimerRangeText"></span>
-						</div>
-						<div style="display: flex; align-items: center; gap: 8px; margin-top: 8px; margin-bottom: 6px;">
-							<input id="options_VisionConeRange" type="range" min="50" max="4000" value="500" step="25" style="flex: 1; cursor: pointer;" oninput="syncConeRangeSlider(this.value)">
-							<span id="lblConeRangeVal" style="font-size: 11px; font-weight: bold; color: #eee; white-space: nowrap;">Cone Range 500m</span>
-							<button type="button" id="btnResetConeRange" onclick="resetConeRangeToMapDefault()" style="background: #00e5ff; color: #000; border: 1px solid #00e5ff; border-radius: 3px; font-weight: bold; font-size: 9px; padding: 1px 5px; cursor: pointer; white-space: nowrap; transition: all 0.15s ease;" title="Reset Cone Range to map's real view range">Default</button>
-						</div>
-						<b id="lblAnalyserToolsHeader">Analyser Tools & Debug</b><br>
-						<label title="Shows real-time calculated movement speed (km/h) and stance/acoustic state for the selected player or vehicle."><input type="checkbox" id="options_ShowSelectionSpeed" onclick="checkboxClicked(this)"> Selected Entity Speed & Acoustic State</label><br>
-						<label title="Smoothly follows the selected player with the camera. Press 'T' to toggle. Free on deselect, smooth transition when switching targets."><input type="checkbox" id="options_CameraTracking" onclick="checkboxClicked(this)"> Camera Tracking (Follow [T])</label><br>
-						<label title="Shows real 2D vector footprints of static objects (buildings, walls, structures) extracted from the game's 3D collision meshes."><input type="checkbox" id="options_DrawBuildingWireframes" onclick="checkboxClicked(this); buildingHeightmap.toggleObbEditorPanel();"> Building Footprints</label><br>
+						<div id="lblSecMapLayers" class="hud-section-title">Map Layers</div>
+						<label class="hud-option-row"><input type="checkbox" checked="" id="options_DrawDOD" onclick="checkboxClicked(this)"><span class="hud-opt-label">DOD</span></label>
+						<label class="hud-option-row"><input type="checkbox" checked="" id="options_DrawFlagRadius" onclick="checkboxClicked(this)"><span class="hud-opt-label">Flag Capture Radius</span></label>
+						<label class="hud-option-row"><input type="checkbox" checked="" id="options_DrawKillLines" onclick="checkboxClicked(this)"><span class="hud-opt-label">Kill Lines</span></label>
+						<label class="hud-option-row"><input type="checkbox" checked="" id="options_drawAllOrderIcons" onclick="checkboxClicked(this)"><span class="hud-opt-label">Squad Orders</span></label>
+						<label class="hud-option-row"><input type="checkbox" checked="" id="options_DrawEmptyVehicles" onclick="checkboxClicked(this)"><span class="hud-opt-label">Empty Vehicles</span></label>
 
-						<label title="Superimposes a colorized heightmap terrain grid over the map to verify elevation."><input type="checkbox" id="options_DrawHeightmapOverlay" onclick="checkboxClicked(this)"> Heightmap Overlay</label><br>
-						<label title="Projects an independent Raycast LOS laser from the selected player/vehicle that detects and stops at exact building walls and terrain elevations."><input type="checkbox" id="options_Draw4KmLaser" onclick="checkboxClicked(this)"> LOS Laser</label><br>
-						<label title="Permite ver el volumen del cono de visión a través de obstáculos y edificios sólidos para inspeccionar desde fuera la visión de un soldado dentro."><input type="checkbox" id="options_VisionConeXRay" onclick="checkboxClicked(this)"> X-Ray Cono</label><br>
-						<label title="Permite ver todos los soldados, vehículos, armas desplegables, bases FOB y estructuras a través de muros, montañas y el terreno."><input type="checkbox" id="options_Wallhack" onclick="checkboxClicked(this)"> X-Ray</label><br>
+						<div id="lblSecUnits" class="hud-section-title">Units &amp; Health</div>
+						<label class="hud-option-row"><input type="checkbox" checked="" id="options_DrawKitIcons" onclick="checkboxClicked(this)"><span class="hud-opt-label">Unit &amp; Kit Icons</span></label>
+						<label class="hud-option-row"><input type="checkbox" checked="" id="options_health_vehicles" onclick="checkboxClicked(this)"><span class="hud-opt-label">Vehicle Health</span></label>
+						<label class="hud-option-row"><input type="checkbox" checked="" id="options_health_players" onclick="checkboxClicked(this)"><span class="hud-opt-label">Player Health</span></label>
+						<label class="hud-option-row"><input type="checkbox" checked="" id="options_ClampVehiclesToMap" onclick="checkboxClicked(this)"><span class="hud-opt-label">Keep Off-Map Vehicles Visible</span> <span class="hud-note-tag">(2D)</span></label>
+						<label class="hud-option-row"><input type="checkbox" checked="" id="options_DrawVehicleHeight" onclick="checkboxClicked(this)"><span class="hud-opt-label">Aircraft Altitude</span></label>
 
-						<div id="devTestObbEditorPanel" style="display: none; background: rgba(0, 15, 30, 0.95); border: 1px solid #00e5ff; border-radius: 4px; padding: 8px; margin-top: 6px; font-size: 11px; color: #fff; max-width: 580px;">
-							<div style="font-weight: bold; color: #ffee00; margin-bottom: 6px; display: flex; justify-content: space-between; align-items: center;">
-								<span>OBB Visual Editor</span>
-								<span id="obbOverrideCountText" style="font-weight: normal; color: #00ff66;">0 overrides</span>
-							</div>
+						<div id="lblSecPlayback" class="hud-section-title">Playback &amp; Scale</div>
+						<label class="hud-option-row" title="Interpolates positions and angles smoothly between server ticks. Turn off on high-tickrate demos to inspect raw server frames."><input type="checkbox" checked="" id="options_Interpolation" onclick="checkboxClicked(this)"><span class="hud-opt-label">Smooth Movement</span> <span id="lblDemoTickrateBadge" class="hud-note-tag">(3.0 Hz)</span></label>
+						<label class="hud-option-row" title="Uses the legacy single-image 2D map instead of tiled zoom atlas."><input type="checkbox" id="options_UseFallbackRenderer" onclick="checkboxClicked(this)"><span class="hud-opt-label">Classic 2D Map</span> <span class="hud-note-tag">(2D)</span></label>
+						<div class="hud-slider-row">
+							<input id="options_canvasScale" type="range" min="0.4" max="3.0" value="1.0" step="0.02" oninput="UIScaleChange()">
+							<span id="lblUIScaleTitle" style="font-size: 12px; color: #efeff1;">UI Scale</span>
+						</div>
+					</div>
+				</div>
 
-							<!-- Mode Selector Radio Buttons -->
-							<div style="display: flex; gap: 12px; margin-bottom: 6px; background: rgba(255,255,255,0.05); padding: 4px; border-radius: 3px;">
-								<label style="cursor: pointer; color: #00e5ff; font-weight: bold;" title="Edits template dimensions for ALL matching objects across the map at once!">
-									<input type="radio" name="obbEditMode" value="global" checked onclick="buildingHeightmap.setEditMode('global')"> [Global Mode - All Matching]
-								</label>
-								<label style="cursor: pointer; color: #ffee00; font-weight: bold;" title="Edits position, rotation, or dimensions of only selected object(s)!">
-									<input type="radio" name="obbEditMode" value="individual" onclick="buildingHeightmap.setEditMode('individual')"> [Individual Mode - Single Object]
-								</label>
-							</div>
+				<!-- Menu 2: 3D Visuals & Textures -->
+				<div id="graphics3dMenu" class="hud-menu-wrapper">
+					<button id="btnMenu3DVisuals" type="button" class="hud-menu-trigger" onclick="toggleTopRightMenu('graphics3dDiv', this)" title="3D Visuals & Textures">
+						<svg width="20px" height="20px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+							<path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path>
+							<polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline>
+							<line x1="12" y1="22.08" x2="12" y2="12"></line>
+						</svg>
+					</button>
+					<div id="graphics3dDiv" class="hud-popover">
+						<div class="hud-popover-header">
+							<span id="lbl3DMenuTitle">3D Visuals</span>
+							<span id="lbl3DModeStatusPill" class="hud-note-tag">2D</span>
+						</div>
+						<div id="banner2dHint" class="hud-2d-banner">
+							<span id="lbl2dOnlyHint">Applies in 3D view</span>
+							<button id="btnQuickEnable3D" type="button" class="hud-mini-btn" onclick="toggle3dMode()">Switch to 3D</button>
+						</div>
 
-							<div id="obbEditorSelectedInfo" style="color: #00e5ff; margin-bottom: 4px; font-weight: bold;">Click or Ctrl+Drag box over any object</div>
+						<div id="lblSec3DTerrain" class="hud-section-title">Terrain &amp; Sky</div>
+						<label class="hud-option-row" title="Uses baked 3D lighting & colormap terrain textures instead of the 2D minimap."><input type="checkbox" checked="" id="options_RealTerrain" onclick="checkboxClicked(this)"><span class="hud-opt-label">Terrain Textures</span></label>
+						<div id="depTerrainDetail" class="hud-dep-branch">
+							<label class="hud-option-row" title="Requires Terrain Textures. Adds close-range high-res ground detail."><input type="checkbox" checked="" id="options_TerrainDetail" onclick="checkboxClicked(this)"><span class="hud-opt-label">Ground Detail Textures</span></label>
+						</div>
+						<label class="hud-option-row" title="Renders the map and layer's authentic atmospheric sky dome (day, night, overcast, or storm) blended with horizon fog."><input type="checkbox" checked="" id="options_DrawSkybox" onclick="checkboxClicked(this)"><span class="hud-opt-label">Sky Dome</span></label>
+						<label class="hud-option-row" title="Applies Project Reality distance fog matching each map and layer preset."><input type="checkbox" checked="" id="options_3dFog" onclick="checkboxClicked(this)"><span class="hud-opt-label">Fog</span></label>
+						<div id="depFogPlayerGroup" class="hud-dep-branch">
+							<label class="hud-option-row" title="Requires Fog. Centers the fog visibility sphere on the selected player instead of the camera so you can see their exact visibility radius."><input type="checkbox" id="options_3dFogOnPlayer" onclick="checkboxClicked(this)"><span class="hud-opt-label">Center Fog on Player</span></label>
+						</div>
 
-							<!-- Orientation Subgroup Selector -->
-							<div id="obbSubgroupContainer" style="display: none; margin-bottom: 6px; font-size: 11px; background: rgba(0, 229, 255, 0.1); border: 1px solid #00e5ff; border-radius: 3px; padding: 4px;">
-								<div style="color: #ffee00; font-weight: bold; margin-bottom: 4px; display: flex; justify-content: space-between; align-items: center;">
-									<span>Orientation Subgroups:</span>
-									<span style="color: #aaa; font-size: 10px;">(Click subgroup to edit only that angle)</span>
+						<div id="lblSec3DStructures" class="hud-section-title">Structures &amp; Units</div>
+						<label class="hud-option-row" title="Loads authentic game building textures and high-detail meshes."><input type="checkbox" id="options_StructureTextures" onclick="checkboxClicked(this)"><span class="hud-opt-label">Building Textures</span></label>
+						<div id="depStructureTexGroup" class="hud-dep-branch">
+							<div class="hud-option-between" style="gap: 8px; padding: 2px 0;" id="rowLodDistance" title="Sets how far detailed buildings and small props are drawn (Very Low to Ultra) to balance visual detail and FPS.">
+								<span id="lblLodDistTitle" class="hud-opt-label" style="font-size: 11.5px;">Detail Distance</span>
+								<div style="display: flex; align-items: center; gap: 6px;">
+									<input id="options_LodDistancePreset" type="range" min="0" max="4" step="1" value="2" style="width: 68px; cursor: pointer;" oninput="setLodDistancePreset(this.value)">
+									<span id="lblLodDistVal" style="font-size: 10.5px; font-weight: bold; color: #76ff03; min-width: 58px; text-align: right;">Balanced</span>
 								</div>
-								<div id="obbSubgroupButtons" style="display: flex; gap: 4px; flex-wrap: wrap;"></div>
+							</div>
+							<label class="hud-option-row" title="Requires Building Textures. Smoothly fades building detail transitions and small props instead of hard pop-in."><input type="checkbox" checked="" id="options_LodFade" onclick="checkboxClicked(this)"><span class="hud-opt-label">Smooth Distance Fade</span></label>
+						</div>
+						<label class="hud-option-row" title="Loads bark and leaf cutout textures for trees (higher GPU cost in dense forests)."><input type="checkbox" id="options_TreeTextures" onclick="checkboxClicked(this)"><span class="hud-opt-label">Tree Textures</span></label>
+						<label class="hud-option-row" title="Renders authentic PR textured bushes when close, instead of lightweight volumetric bushes."><input type="checkbox" id="options_BushTextures" onclick="checkboxClicked(this)"><span class="hud-opt-label">Detailed Bushes</span></label>
+						<label class="hud-option-row" title="Assigns each building template a consistent distinct color. When Building Textures is active, tints textures with that color."><input type="checkbox" id="options_StructureColors" onclick="checkboxClicked(this)"><span class="hud-opt-label">Color by Building Type</span></label>
+						<div id="lblStructureColorsHint" class="hud-hint">Solid color by type, or tints textures when Building Textures is ON.</div>
+						<label class="hud-option-row" title="Loads authentic PR faction soldier & vehicle textures in 3D."><input type="checkbox" id="options_FactionTextures" onclick="checkboxClicked(this)"><span class="hud-opt-label">Soldier &amp; Vehicle Textures</span></label>
+
+						<div id="lblSec3DLighting" class="hud-section-title">Lighting &amp; Shadows</div>
+						<label class="hud-option-row" title="Real-time directional sun shadows aligned with each map's sun direction."><input type="checkbox" id="options_3dShadows" onclick="checkboxClicked(this)"><span class="hud-opt-label">Dynamic Shadows</span></label>
+						<label class="hud-option-row" title="Combines baked building Vertex AO with real-time screen-space ambient occlusion (SSAO) for crisp contact shadows."><input type="checkbox" id="options_3dAoSsao" onclick="checkboxClicked(this)"><span class="hud-opt-label">Ambient Occlusion</span></label>
+						<div id="depSsaoQualityGroup" class="hud-dep-branch">
+							<div class="hud-option-between" style="gap: 8px; padding: 2px 0;" id="rowSsaoQuality" title="Controls SSAO resolution and sample count. Full-res Balanced/High gives much sharper contact shadows.">
+								<span id="lblSsaoQualTitle" class="hud-opt-label" style="font-size: 11.5px;">AO Quality</span>
+								<div style="display: flex; align-items: center; gap: 6px;">
+									<input id="options_3dSsaoQuality" type="range" min="0" max="2" step="1" value="1" style="width: 60px; cursor: pointer;" oninput="setSsaoQuality(this.value)">
+									<span id="lblSsaoQualVal" style="font-size: 10.5px; font-weight: bold; color: #76ff03; min-width: 52px; text-align: right;">Balanced</span>
+								</div>
+							</div>
+						</div>
+						<div class="hud-option-between" style="gap: 8px; padding: 3px 0 1px 0;" id="rowAntiAliasing" title="Smooths jagged 3D edges. Ordered from highest performance to highest quality.">
+							<span id="lblAATitle" class="hud-opt-label" style="font-size: 11.5px;">Anti-Aliasing</span>
+							<select id="options_3dAntiAliasing" onchange="set3dAntiAliasing(this.value); this.blur();" style="background: rgba(16, 26, 25, 0.92); color: #e2e8e7; border: 1px solid #3c5452; border-radius: 3px; font-size: 10.5px; padding: 1px 4px; cursor: pointer;">
+								<option value="0">Off</option>
+								<option value="1" selected>FXAA</option>
+								<option value="2">MSAA 4x</option>
+								<option value="3">MSAA + FXAA</option>
+							</select>
+						</div>
+
+						<div id="lblSec3DControls" class="hud-section-title">3D Controls</div>
+						<div class="hud-hint" style="margin: 3px 0 0 0; max-width: none; display: flex; flex-direction: column; gap: 2px;">
+							<div class="hud-option-between"><span style="color: #d0d6d5; font-weight: bold;">WASD</span><span id="lblCtrlMove">Move</span></div>
+							<div class="hud-option-between"><span style="color: #d0d6d5; font-weight: bold;">E / Q</span><span id="lblCtrlVert">Up / Down</span></div>
+							<div class="hud-option-between"><span id="lblCtrlZoomKey" style="color: #d0d6d5; font-weight: bold;">V (+ Wheel)</span><span id="lblCtrlZoom">Optical Zoom</span></div>
+							<div class="hud-option-between"><span style="color: #d0d6d5; font-weight: bold;">Shift</span><span id="lblCtrlBoost">Boost</span></div>
+							<div class="hud-option-between"><span style="color: #d0d6d5; font-weight: bold;">G</span><span id="lblCtrlCycle">Cycle 2D / 3D</span></div>
+						</div>
+					</div>
+				</div>
+
+				<!-- Menu 3: Demo Analyser (Tabbed) -->
+				<div id="analyserMenu" class="hud-menu-wrapper">
+					<button id="btnMenuAnalyser" type="button" class="hud-menu-trigger" onclick="toggleTopRightMenu('analyserDiv', this)" title="Demo Analyser & Tools">
+						<svg width="20px" height="20px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+							<circle cx="12" cy="12" r="9"></circle>
+							<circle cx="12" cy="12" r="4"></circle>
+							<line x1="12" y1="2" x2="12" y2="5"></line>
+							<line x1="12" y1="19" x2="12" y2="22"></line>
+							<line x1="2" y1="12" x2="5" y2="12"></line>
+							<line x1="19" y1="12" x2="22" y2="12"></line>
+						</svg>
+					</button>
+					<div id="analyserDiv" class="hud-popover" style="min-width: 315px;">
+						<div class="hud-popover-header">
+							<span id="lblDemoAnalyserHeader">Demo Analyser</span>
+							<div style="display: flex; gap: 3px;">
+								<button id="btnLangEN" type="button" class="hud-lang-btn hud-mini-btn active" data-lang="EN" onclick="setAnalyserLanguage('EN')">EN</button>
+								<button id="btnLangES" type="button" class="hud-lang-btn hud-mini-btn" data-lang="ES" onclick="setAnalyserLanguage('ES')">ES</button>
+								<button id="btnLangPT" type="button" class="hud-lang-btn hud-mini-btn" data-lang="PT" onclick="setAnalyserLanguage('PT')">PT</button>
+							</div>
+						</div>
+
+						<div class="analyser-tabs">
+							<button id="tabBtnVision" type="button" class="analyser-tab-btn active" onclick="switchAnalyserTab('vision', this)">Vision &amp; Aim</button>
+							<button id="tabBtnTactical" type="button" class="analyser-tab-btn" onclick="switchAnalyserTab('tactical', this)">Tactical &amp; Audio</button>
+							<button id="tabBtnDebug" type="button" class="analyser-tab-btn" onclick="switchAnalyserTab('debug', this)">Clip &amp; Map</button>
+						</div>
+
+						<!-- Tab 1: Vision & Aim -->
+						<div id="analyserTab_vision" class="analyser-tab-pane active">
+							<label class="hud-option-row" title="Draws the selected player's field of view cone (94.9 deg horizontal FOV), calibrated to the map's visibility distance and respecting fog in 3D."><input type="checkbox" id="options_DrawVisionCone" onclick="checkboxClicked(this)"><span class="hud-opt-label">Vision Cone</span></label>
+							<div id="depVisionConeGroup" class="hud-dep-branch">
+								<div class="hud-option-between" style="gap: 4px;">
+									<label class="hud-option-row" title="Clips the vision cone dynamically against building walls and terrain hills."><input type="checkbox" id="options_VisionConeRespectsLOS" onclick="checkboxClicked(this)"><span class="hud-opt-label">Block by Walls &amp; Terrain</span></label>
+									<div style="display: flex; align-items: center; gap: 2px;">
+										<button id="btnConeQualNormal" type="button" onclick="setVisionConeQuality('normal')" style="background: #3a5250; color: #fff; border: 1px solid #8fa3a1; border-radius: 2px; font-weight: bold; font-size: 9px; padding: 1px 4px; cursor: pointer;" title="3D Cone Quality: Normal (64 Steps, 512x128 Depth Map)">Normal</button>
+										<button id="btnConeQualHigh" type="button" onclick="setVisionConeQuality('high')" style="background: rgba(255,255,255,0.08); color: #bbb; border: 1px solid #555; border-radius: 2px; font-weight: bold; font-size: 9px; padding: 1px 4px; cursor: pointer;" title="3D Cone Quality: High (128 Steps, 1024x256 Depth Map)">High</button>
+										<button id="btnConeQualUltra" type="button" onclick="setVisionConeQuality('ultra')" style="background: rgba(255,255,255,0.08); color: #bbb; border: 1px solid #555; border-radius: 2px; font-weight: bold; font-size: 9px; padding: 1px 4px; cursor: pointer;" title="3D Cone Quality: Ultra (256 Steps, 2048x512 Depth Map)">Ultra</button>
+										<button id="btnConeQualExtreme" type="button" onclick="setVisionConeQuality('extreme')" style="background: rgba(255,255,255,0.08); color: #bbb; border: 1px solid #555; border-radius: 2px; font-weight: bold; font-size: 9px; padding: 1px 4px; cursor: pointer;" title="3D Cone Quality: Extreme (512 Steps, 4096x1024 Depth Map)">Extreme</button>
+									</div>
+								</div>
+								<label class="hud-option-row" title="Renders the 3D vision cone visible through walls and terrain geometry."><input type="checkbox" id="options_VisionConeXRay" onclick="checkboxClicked(this)"><span class="hud-opt-label">Show Through Walls</span> <span class="hud-note-tag">(3D)</span></label>
 							</div>
 
-							<!-- Row 1: Geometry & Position Controls -->
-							<div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; margin-bottom: 6px;">
-								<button type="button" onclick="buildingHeightmap.swapSelectedAxes()" style="background: #1a3a4a; color: #00e5ff; border: 1px solid #00e5ff; border-radius: 3px; cursor: pointer; padding: 4px 6px; font-weight: bold;" title="Swap Width & Length (Key: E)">Swap Axes (E)</button>
-								<button type="button" onclick="buildingHeightmap.rotateSelectedObb(90)" style="background: #1a2a3a; color: #ffee00; border: 1px solid #ffee00; border-radius: 3px; cursor: pointer; padding: 4px 6px; font-weight: bold;" title="Rotate 90° clockwise (Key: R)">Rot 90° (R)</button>
-								<button type="button" onclick="buildingHeightmap.duplicateSelectedObb()" style="background: #2a3a1a; color: #aaffaa; border: 1px solid #aaffaa; border-radius: 3px; cursor: pointer; padding: 4px 6px; font-weight: bold;" title="Duplicate selected object (Key: Ctrl+D)">📋 Duplicate</button>
-								<button type="button" onclick="buildingHeightmap.deleteSelectedObb()" style="background: #3a1a1a; color: #ff4444; border: 1px solid #ff4444; border-radius: 3px; cursor: pointer; padding: 4px 6px; font-weight: bold;" title="Hide object (Key: Delete)">🗑️ Delete</button>
+							<hr class="hud-divider">
+							<label class="hud-option-row" title="Draws the player's aim line (turns red when aiming at a covered enemy) and orange lines to visible enemies inside the vision cone."><input type="checkbox" id="options_DrawThreatLasers" onclick="checkboxClicked(this)"><span class="hud-opt-label">Aim &amp; Threat Lines</span></label>
+							<div id="depThreatLasersGroup" class="hud-dep-branch">
+								<label class="hud-option-row" title="Checks terrain and building cover for Aim & Threat Lines and Reaction Timer."><input type="checkbox" id="options_ConeRespectsTerrain" onclick="checkboxClicked(this)"><span class="hud-opt-label">Check Wall &amp; Terrain Cover</span></label>
+							</div>
+							<div class="hud-option-between">
+								<label class="hud-option-row" title="Extends the aim line beyond the map's view range/fog distance to analyze focus on distant targets."><input type="checkbox" id="options_DrawBVRLaser" onclick="checkboxClicked(this)"><span class="hud-opt-label">Long-Range Aim Line</span></label>
+								<button type="button" id="btnBVRFocusAlerts" onclick="openBVRFocusModal()" class="hud-mini-btn" title="View long-range aiming focus leaderboard for all players">Focus List</button>
+							</div>
+							<label class="hud-option-row" title="Projects an independent 4km sight ray from the selected unit that stops at exact building walls and terrain hills."><input type="checkbox" id="options_Draw4KmLaser" onclick="checkboxClicked(this)"><span class="hud-opt-label">Direct Sight Ray (4km)</span></label>
+
+							<hr class="hud-divider">
+							<div id="mapViewRangeContainer" style="display: none; font-size: 11px; color: #9ea8a7;" title="Effective visibility distance calculated from the active map and layer's authentic PR fog preset and max view distance.">
+								<span id="valMapViewRangeText"></span>
+							</div>
+							<div id="engagementTimerRangeContainer" style="display: none; font-size: 11px; color: #9ea8a7; margin-top: 2px;" title="Adaptive reaction zone radius based on map size: 50m for 1km maps, 100m for 2km maps, 150m for 4km/8km maps.">
+								<span id="valEngagementTimerRangeText"></span>
+							</div>
+							<div class="hud-slider-row" style="margin-top: 6px;">
+								<input id="options_VisionConeRange" type="range" min="50" max="4000" value="500" step="25" oninput="syncConeRangeSlider(this.value)">
+								<span id="lblConeRangeVal" style="font-size: 11px; font-weight: bold; color: #efeff1; white-space: nowrap;">Vision Range 500m</span>
+								<button type="button" id="btnResetConeRange" onclick="resetConeRangeToMapDefault()" class="hud-mini-btn" title="Reset Vision Range to map's default view range">Default</button>
+							</div>
+						</div>
+
+						<!-- Tab 2: Tactical & Audio -->
+						<div id="analyserTab_tactical" class="analyser-tab-pane">
+							<div id="lblSecTacIntel" class="hud-section-title">Intel &amp; Timers</div>
+							<label class="hud-option-row" title="Highlights enemy FOBs, players, and vehicles marked by squad leader orders."><input type="checkbox" id="options_DrawSpottedIndicators" onclick="checkboxClicked(this)"><span class="hud-opt-label">Spotted Targets</span></label>
+							<label class="hud-option-row" title="Creates a radius zone around the selected player and shows a timer in seconds above nearby enemies to measure reaction time."><input type="checkbox" id="options_DrawFlankChronometer" onclick="checkboxClicked(this)"><span class="hud-opt-label">Reaction Timer</span></label>
+
+							<div id="lblSecTacAudio" class="hud-section-title">Audio &amp; Movement</div>
+							<label class="hud-option-row" title="Draws a dynamic sound radius around the selected player or vehicle that expands and fades smoothly with movement speed, stance, or engine activity."><input type="checkbox" id="options_DrawMovementSoundAuras" onclick="checkboxClicked(this)"><span class="hud-opt-label">Footstep &amp; Engine Range</span></label>
+							<label class="hud-option-row" title="Displays expanding sound waves for heavy weapons and projectiles fired by the selected player or vehicle (AT launchers, autocannons, tanks, mortars, and artillery)."><input type="checkbox" id="options_DrawShootingSoundShockwaves" onclick="checkboxClicked(this)"><span class="hud-opt-label">Heavy Weapon Sound Waves</span></label>
+							<label class="hud-option-row" title="Shows real-time speed (km/h) and estimated stance or engine sound state for the selected unit in the Selection window and 2D sound rings."><input type="checkbox" checked="" id="options_ShowSelectionSpeed" onclick="checkboxClicked(this)"><span class="hud-opt-label">Show Speed &amp; Stance</span></label>
+
+							<div id="lblSecTacCam" class="hud-section-title">Camera &amp; Visibility</div>
+							<label class="hud-option-row" title="Smoothly follows the selected player or vehicle with the camera in 2D and 3D. Press 'T' to toggle."><input type="checkbox" id="options_CameraTracking" onclick="checkboxClicked(this)"><span class="hud-opt-label">Follow Selected [T]</span></label>
+							<label class="hud-option-row" title="Shows occluded parts of soldiers, vehicles, deployables, and FOBs as team-colored silhouettes through walls and terrain in 3D."><input type="checkbox" id="options_Wallhack" onclick="checkboxClicked(this)"><span class="hud-opt-label">X-Ray Units</span> <span class="hud-note-tag">(3D)</span></label>
+						</div>
+
+						<!-- Tab 3: Clip & Map -->
+						<div id="analyserTab_debug" class="analyser-tab-pane">
+							<div id="lblSecClipRec" class="hud-section-title">Clip Recorder</div>
+							<div style="display: flex; flex-direction: column; gap: 4px; margin-bottom: 7px; background: rgba(0,0,0,0.22); padding: 6px; border-radius: 2px; border: 1px solid #444d4c;">
+								<div style="display: flex; justify-content: space-between; align-items: center;">
+									<span id="lblClipFps" style="font-size: 11px; color: #eee;" title="Constant framerate for video capture">Framerate:</span>
+									<div style="display: flex; gap: 3px;">
+										<button id="btnRecFps30" type="button" onclick="setRecorderFPS(30)" style="background: rgba(255,255,255,0.08); color: #bbb; border: 1px solid #555; border-radius: 2px; font-weight: bold; font-size: 9px; padding: 1px 6px; cursor: pointer;">30 FPS</button>
+										<button id="btnRecFps60" type="button" onclick="setRecorderFPS(60)" style="background: #3a5250; color: #fff; border: 1px solid #8fa3a1; border-radius: 2px; font-weight: bold; font-size: 9px; padding: 1px 6px; cursor: pointer;">60 FPS</button>
+									</div>
+								</div>
+								<div style="display: flex; justify-content: space-between; align-items: center;">
+									<span id="lblClipFmt" style="font-size: 11px; color: #eee;" title="Output video container format">Format:</span>
+									<div style="display: flex; gap: 3px;">
+										<button id="btnRecFmtMp4" type="button" onclick="setRecorderFormat('mp4')" style="background: #3a5250; color: #fff; border: 1px solid #8fa3a1; border-radius: 2px; font-weight: bold; font-size: 9px; padding: 1px 6px; cursor: pointer;">.MP4</button>
+										<button id="btnRecFmtWebm" type="button" onclick="setRecorderFormat('webm')" style="background: rgba(255,255,255,0.08); color: #bbb; border: 1px solid #555; border-radius: 2px; font-weight: bold; font-size: 9px; padding: 1px 6px; cursor: pointer;">.WEBM</button>
+									</div>
+								</div>
+								<div style="display: flex; align-items: center; gap: 6px;">
+									<span id="lblClipBitrate" style="font-size: 11px; color: #eee; white-space: nowrap;" title="Video bitrate in Mbps">Bitrate:</span>
+									<input id="recBitrateSlider" type="range" min="5" max="80" step="5" value="30" style="flex: 1; cursor: pointer;" oninput="setRecorderBitrate(this.value)">
+									<span id="lblRecBitrateVal" style="font-size: 10px; font-weight: bold; color: #efeff1; min-width: 48px; text-align: right; white-space: nowrap;">30 Mbps</span>
+								</div>
 							</div>
 
-							<!-- Row 2: Dimension Scaling -->
-							<div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; margin-bottom: 6px;">
-								<button type="button" onclick="buildingHeightmap.scaleWidth(1)" style="background: #1a2a3a; color: #fff; border: 1px solid #555; border-radius: 3px; cursor: pointer; padding: 3px 4px;">Width +1m (W)</button>
-								<button type="button" onclick="buildingHeightmap.scaleWidth(-1)" style="background: #1a2a3a; color: #fff; border: 1px solid #555; border-radius: 3px; cursor: pointer; padding: 3px 4px;">Width -1m (S)</button>
-								<button type="button" onclick="buildingHeightmap.scaleLength(1)" style="background: #1a2a3a; color: #fff; border: 1px solid #555; border-radius: 3px; cursor: pointer; padding: 3px 4px;">Length +1m (D)</button>
-								<button type="button" onclick="buildingHeightmap.scaleLength(-1)" style="background: #1a2a3a; color: #fff; border: 1px solid #555; border-radius: 3px; cursor: pointer; padding: 3px 4px;">Length -1m (A)</button>
-							</div>
-
-							<!-- Row 3: File & Reset Management -->
-							<div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; margin-bottom: 4px;">
-								<button type="button" onclick="buildingHeightmap.resetTemplateProfile()" style="background: #2a1a1a; color: #ff8888; border: 1px solid #ff4444; border-radius: 3px; cursor: pointer; padding: 4px 6px;" title="Reset selected template to defaults">Reset Tpl</button>
-								<button type="button" onclick="buildingHeightmap.clearAllOverrides()" style="background: #4a1a1a; color: #ff4444; border: 1px solid #ff4444; border-radius: 3px; cursor: pointer; padding: 4px 6px; font-weight: bold;" title="Clears all saved changes!">Clear All</button>
-								<input type="file" id="obbImportFileInput" accept=".json" style="display:none;" onchange="buildingHeightmap.importOverridesJSONFile(this.files)">
-								<button type="button" onclick="document.getElementById('obbImportFileInput').click()" style="background: #3a3a1a; color: #ffff00; border: 1px solid #ffff00; border-radius: 3px; cursor: pointer; padding: 4px 6px; font-weight: bold;" title="Imports a saved OBB overrides JSON file!">Import JSON</button>
-								<button type="button" onclick="buildingHeightmap.exportOverridesJSON()" style="background: #1a3a1a; color: #00ff66; border: 1px solid #00ff66; border-radius: 3px; cursor: pointer; padding: 4px 6px; font-weight: bold;">Export JSON</button>
-							</div>
-
-							<div style="color: #aaa; font-size: 10px; margin-top: 4px;">
-								<b>Controls:</b> WASD = Size | Arrow Keys = Move Position | R/Q = Rotate | E = Swap | Ctrl+D = Duplicate | Del = Hide
-							</div>
+							<div id="lblAnalyserToolsHeader" class="hud-section-title">Map Inspection</div>
+							<label class="hud-option-row" title="Shows 2D vector outlines of buildings and walls extracted from the game's 3D collision meshes."><input type="checkbox" id="options_DrawBuildingWireframes" onclick="checkboxClicked(this)"><span class="hud-opt-label">Building Outlines</span> <span class="hud-note-tag">(2D)</span></label>
+							<label class="hud-option-row" title="Overlays a colorized terrain elevation grid on the 2D map."><input type="checkbox" id="options_DrawHeightmapOverlay" onclick="checkboxClicked(this)"><span class="hud-opt-label">Elevation Map</span> <span class="hud-note-tag">(2D)</span></label>
 						</div>
 						<script>setTimeout(updateAnalyserSliderLabels, 500)</script>
 					</div>
-				</label>
-				<img src=".\Graphics\UI\stacks.png">
+				</div>
 			</div>
 			<div id="mapDiv">
 				<div id="renderers">
-					<canvas id="map"></canvas>
-					<canvas id="map3d" style="display: none;"></canvas>
-					<canvas id="map3dHud" style="position: absolute; left: 0; top: 0; width: 100%; height: 100%; pointer-events: none; z-index: 1; display: none;"></canvas>
+					<canvas id="map" style="position: absolute; left: 0; top: 0; width: 100%; height: 100%;"></canvas>
+					<canvas id="map3d" style="position: absolute; left: 0; top: 0; width: 100%; height: 100%; display: none;"></canvas>
+					<canvas id="map3dHud" style="position: absolute; left: 0; top: 0; width: 100%; height: 100%; pointer-events: none; z-index: 2; display: none;"></canvas>
 				</div>
 				<div id="controlBarContainer">
-					<button id="startPauseButton" class="state-paused" type="button" onclick="togglePlay()">
-						<div class="play-icon">
-							<svg viewBox="0 0 20 20" preserveAspectRatio="xMidYMid" tabindex="-1" class=""><polygon class="fill" points="1,0 20,10 1,20"></polygon></svg>
+					<!-- Row 1: Transport, Recorder & Timeline Layer/Zoom Controls -->
+					<div id="timelineTopStrip">
+						<div class="tlTopLeft">
+							<button id="recordClipButton" type="button" onclick="clipRecorder.toggle()" title="Record Tracker Clip (CFR Synchronized)">
+								<svg id="recordBtnIconSvg" width="14" height="14" viewBox="0 0 24 24" style="display: block;">
+									<circle id="recordBtnShapeCircle" cx="12" cy="12" r="8" fill="#ffffff" />
+									<rect id="recordBtnShapeSquare" x="5" y="5" width="14" height="14" rx="2" fill="#ffffff" style="display: none;" />
+								</svg>
+							</button>
+							<span id="recordTimeBadge" style="display: none; background: rgba(185, 28, 28, 0.92); color: #fff; font-size: 11px; font-weight: bold; padding: 3px 8px; border-radius: 3px; user-select: none;">REC 00:00 [60 FPS]</span>
+							<div id="timelineTransportBar" class="tlToolbarGroup">
+								<button type="button" class="tlBtn" onclick="analyserTimeline.stepTime(-10)" title="Step back 10 seconds">-10s</button>
+								<button type="button" class="tlBtn" onclick="analyserTimeline.stepTicks(-1)" title="Previous server tick">-1t</button>
+								<button type="button" class="tlBtn" onclick="analyserTimeline.stepTicks(1)" title="Next server tick">+1t</button>
+								<button type="button" class="tlBtn" onclick="analyserTimeline.stepTime(10)" title="Step forward 10 seconds">+10s</button>
+								<span class="tlDivider">|</span>
+								<button id="btnTlPrev" type="button" class="tlBtn" onclick="analyserTimeline.jumpAdjacentEvent(-1)" title="Jump to previous active timeline event">Prev</button>
+								<button id="btnTlNext" type="button" class="tlBtn" onclick="analyserTimeline.jumpAdjacentEvent(1)" title="Jump to next active timeline event">Next</button>
+							</div>
 						</div>
-						<div class="pause-icon">
-							<svg viewBox="0 0 20 20" preserveAspectRatio="xMidYMid" tabindex="-1"><rect class="fill" width="6" height="100%" x="0" y="0"></rect><rect class="fill" width="6" height="100%" x="12" y="0"></rect></svg>
+
+						<div id="timelineSubToolbar" class="tlTopRight">
+							<div class="tlToolbarGroup">
+								<span id="lblTlTracks" class="tlGroupLabel">Tracks:</span>
+								<button id="btnTlLayer_tickets" type="button" class="tlBtn tlLayerBtn" onclick="analyserTimeline.toggleLayer('tickets')" title="Show Team 1 vs Team 2 Ticket Curves">Tickets</button>
+								<button id="btnTlLayer_flags" type="button" class="tlBtn tlLayerBtn" onclick="analyserTimeline.toggleLayer('flags')" title="Show Flag Capture Events">Flags</button>
+								<button id="btnTlLayer_fobs" type="button" class="tlBtn tlLayerBtn" onclick="analyserTimeline.toggleLayer('fobs')" title="Show FOB Built / Destroyed Events">FOBs</button>
+								<button id="btnTlLayer_caches" type="button" class="tlBtn tlLayerBtn" onclick="analyserTimeline.toggleLayer('caches')" title="Show Insurgency Weapon Cache Events">Caches</button>
+								<button id="btnTlLayer_vehs" type="button" class="tlBtn tlLayerBtn" onclick="analyserTimeline.toggleLayer('vehs')" title="Show Destroyed Vehicles">Vehicles</button>
+								<button id="btnTlLayer_bookmarks" type="button" class="tlBtn tlLayerBtn" onclick="analyserTimeline.toggleLayer('bookmarks')" title="Show Bookmarks">Marks</button>
+								<button id="btnTlLayer_selected" type="button" class="tlBtn tlLayerBtn" onclick="analyserTimeline.toggleLayer('selected')" title="Show Selected Player / Squad Kills, Deaths &amp; Revives">Selected</button>
+							</div>
+							<div class="tlToolbarGroup">
+								<span id="lblTlZoom" class="tlGroupLabel">Zoom:</span>
+								<button id="btnTlPanLeft" type="button" class="tlBtn" style="display:none;" onclick="analyserTimeline.panZoomWindow(-0.5)" title="Pan zoomed timeline earlier">&laquo;</button>
+								<button id="btnTlZoom_full" type="button" class="tlBtn active" onclick="analyserTimeline.setZoomMode('full')" title="Show full match timeline">Full</button>
+								<button id="btnTlZoom_10m" type="button" class="tlBtn" onclick="analyserTimeline.setZoomMode('10m')" title="Zoom timeline to 10-minute window (scroll wheel or use arrows to pan)">10m</button>
+								<button id="btnTlZoom_2m" type="button" class="tlBtn" onclick="analyserTimeline.setZoomMode('2m')" title="Zoom timeline to 2-minute window (scroll wheel or use arrows to pan)">2m</button>
+								<button id="btnTlPanRight" type="button" class="tlBtn" style="display:none;" onclick="analyserTimeline.panZoomWindow(0.5)" title="Pan zoomed timeline later">&raquo;</button>
+								<span class="tlDivider">|</span>
+								<button id="btnTlLoopIn" type="button" class="tlBtn" onclick="analyserTimeline.setLoopPoint('in')" title="Set Loop / Clip In Point [A] at current time">[In A</button>
+								<button id="btnTlLoopOut" type="button" class="tlBtn" onclick="analyserTimeline.setLoopPoint('out')" title="Set Loop / Clip Out Point [B] at current time">Out B]</button>
+								<button id="btnTlLoopClear" type="button" class="tlBtn" style="display:none;" onclick="analyserTimeline.setLoopPoint('clear')" title="Clear A-B range">Clear</button>
+							</div>
 						</div>
-					</button>
+					</div>
+
+					<!-- Row 2: Expandable Vertical Multi-Lane Event Tracks (only visible when >= 1 track is enabled) -->
+					<div id="timelineLanesContainer" style="display: none;">
+						<div id="timelineLanesPlayhead" aria-hidden="true"></div>
+						<div id="timelineLanesBody"></div>
+					</div>
+
+					<!-- Row 3: Main Scrubber & Playback Bar -->
 					<div id="controlBar">
+						<div class="tlScrubberLeft">
+							<button id="startPauseButton" class="state-paused" type="button" onclick="togglePlay()">
+								<div class="play-icon">
+									<svg viewBox="0 0 20 20" preserveAspectRatio="xMidYMid" tabindex="-1"><polygon class="fill" points="2,1 19,10 2,19"></polygon></svg>
+								</div>
+								<div class="pause-icon">
+									<svg viewBox="0 0 20 20" preserveAspectRatio="xMidYMid" tabindex="-1"><rect class="fill" width="5.5" height="18" x="2" y="1"></rect><rect class="fill" width="5.5" height="18" x="12.5" y="1"></rect></svg>
+								</div>
+							</button>
+							<div id="timelineClockDisplay" title="Current Match Time / Total Duration">00:00 / 00:00</div>
+						</div>
+
 						<label id="playBarLabel">
+							<canvas id="timelineScrubBgCanvas" aria-hidden="true"></canvas>
 							<input id="playBar" type="range" min="0" max="1" step="1" value="0" oninput="onPlayBarChange()" />
-							<div id="demoTimelineMarkers" aria-hidden="true"></div>
 							<div id="playBarBubble"></div>
 						</label>
-						<div id="addBookmarkButton" class="cursorPointer" title="Add Bookmark" onclick='$("#addbookmarkComment").dialog("open")'>&#x2730;</div>
-						<div id="controlBarOptions">
-							<svg x="0px" y="0px" width="30px" height="30px" viewBox="0 0 40 40" enable-background="new 0 0 40 40" xml:space="preserve" bodyBackgroundColor="rgba(255,255,255,0)">
-							<path transform="matrix(0.8101235312460657 0.5862592123978987 -0.5862592123978987 0.8101235312460657 29.975031174922556 11.636442661048283)" width="5.761511216056682" height="19.220779220779207" stroke-width="0.9999999999999997" stroke-miterlimit="3" stroke="#000000" fill="#fff" d="M0,-3.1086244689504383e-15 L-5.761511216056682,5.773159728050814e-15 L-5.761511216056675,19.220779220779203 L0,19.220779220779203 L0,-3.1086244689504383e-15 Z " />
 
-							<path transform="matrix(0.9957592516932394 -0.09199735141469921 0.09199735141469921 0.9957592516932394 8.878225575584047 31.373540173431767)" width="8.97284533648169" height="9.775678866587938" stroke-width="1.951924223335662" stroke-miterlimit="3" stroke="#000000" fill="#fff" d="M3.552713678800501e-15,-4.973799150320701e-14 L8.972845336481694,-9.775678866587988 " />
-
-							<path transform="matrix(0.830062596210468 -0.5576702308464527 0.5576702308464527 0.830062596210468 1.1985338022710756 31.135220023443903)" width="7.102930105749799" height="4.547710917954465" stroke-width="1.9999999999999993" stroke-miterlimit="3" stroke="#000000" fill="#fff" d="M-1.4210854715202004e-14,-1.4210854715202004e-14 L7.102930105749785,4.547710917954451 " />
-
-							<path transform="matrix(0.9915096382957684 0.13003321562814005 -0.13003321562814005 0.9915096382957684 15.419854232075359 23.970642249905524)" width="10.851982609793112" height="6.039315158787566" stroke-width="2.2788796040368786" stroke-miterlimit="3" stroke="#fff" fill="#000000" d="M0,0 L10.851982609793112,6.039315158787566 " />
-
-							<path transform="matrix(0.9926024522949254 -0.12140993245241759 0.12140993245241759 0.9926024522949254 25.528058759919183 30.115229863680206)" width="5.591821619738965" height="6.53459198276898" stroke-width="2.0486818195100196" stroke-miterlimit="3" stroke="#000000" fill="#fff" d="M-1.4210854715202004e-14,-1.4210854715202004e-14 L-5.59182161973898,6.534591982768966 " />
-
-							<path transform="matrix(0.9582582150495895 -0.28590416801784246 0.28590416801784246 0.9582582150495895 29.19762323604641 11.643998448916042)" width="4.3614259360517735" height="5.738389306327562" stroke-width="2.0674102392772857" stroke-miterlimit="3" stroke="#000000" fill="#fff" d="M-7.105427357601002e-15,3.552713678800501e-15 L4.361425936051766,5.738389306327566 " />
-
-							<path transform="matrix(0.9582582150495895 -0.2859041680178422 0.2859041680178422 0.9582582150495895 33.93803294535569 15.685719794526246)" width="5.665736738232873" height="3.7578952711596045" stroke-width="2" stroke-miterlimit="3" stroke="#fff" fill="#000000" d="M0,0 L5.665736738232873,-3.7578952711596045 " />
-
-							<path transform="matrix(1 0 0 1 25.17119244391997 8.595041322314046)" width="8.170011806375438" height="0.4250295159386077" stroke-width="2" stroke-miterlimit="3" stroke="#fff" fill="#000000" d="M0,0 L-8.170011806375438,-0.4250295159386077 " />
-
-							<path transform="matrix(1 0 0 1 17.756788665879938 7.8866587957497)" width="4.108618654073204" height="4.9586776859504145" stroke-width="2" stroke-miterlimit="3" stroke="#000000" fill="#fff" d="M0,0 L-4.108618654073204,4.9586776859504145 " />
-
-							<path transform="matrix(1 0 0 1 27.29634002361319 2.8807556080283296)" width="6.785533901003767" height="6.738308399232816" stroke-width="2" stroke-miterlimit="3" stroke="#000000" fill="#fff" d="M0,3.369154199616408 C0,1.5084215463120998 1.5189933337973407,0 3.3927669505018834,0 C5.266540567206426,0 6.785533901003767,1.5084215463120998 6.785533901003767,3.369154199616408 C6.785533901003767,5.229886852920716 5.266540567206426,6.738308399232816 3.3927669505018834,6.738308399232816 C1.5189933337973407,6.738308399232816 0,5.229886852920716 0,3.369154199616408 Z " />
-
-							<path transform="matrix(1 0 0 1 11.569843648486714 11.684357142408704)" width="8.736717827626919" height="0.04722550177095641" stroke-miterlimit="3" stroke="#000000" fill="#fff" d="M0,-1.7763568394002505e-15 L-8.736717827626919,0.047225501770954637 " />
-
-							<path transform="matrix(1 0 0 1 11.33412042502955 15.631641086186534)" width="8.500590318772137" stroke-miterlimit="3" stroke="#fff" fill="#fff" d="M0,0 L-8.500590318772137,0 " />
-
-							<path transform="matrix(1 0 0 1 11.381345926800485 19.64580873671782)" width="8.64226682408502" height="0.04722550177095641" stroke-width="1.0499569698583933" stroke-miterlimit="3" stroke="#fff" fill="#000000" d="M-3.552713678800501e-15,0 L-8.642266824085024,0.04722550177095641 " />
-
-				</svg>
-							<label id="playSpeedLabel">
-								<input id="playSpeed" orient="vertical" type="range" min="0.7" max="7" step="0.05" value="1" oninput="onPlaySpeedChange()" />
-							</label>
+						<div class="tlScrubberRight">
+							<div id="addBookmarkButton" class="cursorPointer" title="Add Bookmark" onclick='$("#addbookmarkComment").dialog("open")'>&#x2730;</div>
+							<div id="controlBarOptions">
+								<svg x="0px" y="0px" width="24px" height="24px" viewBox="0 0 40 40" enable-background="new 0 0 40 40" xml:space="preserve">
+									<path transform="matrix(0.8101235312460657 0.5862592123978987 -0.5862592123978987 0.8101235312460657 29.975031174922556 11.636442661048283)" stroke-width="1" stroke-miterlimit="3" stroke="#000000" fill="#fff" d="M0,0 L-5.76,5.77 L-5.76,19.22 L0,19.22 L0,0 Z " />
+									<path transform="matrix(0.9957592516932394 -0.09199735141469921 0.09199735141469921 0.9957592516932394 8.878225575584047 31.373540173431767)" stroke-width="1.95" stroke-miterlimit="3" stroke="#000000" fill="#fff" d="M0,0 L8.97,-9.77 " />
+									<path transform="matrix(0.830062596210468 -0.5576702308464527 0.5576702308464527 0.830062596210468 1.1985338022710756 31.135220023443903)" stroke-width="2" stroke-miterlimit="3" stroke="#000000" fill="#fff" d="M0,0 L7.10,4.54 " />
+									<path transform="matrix(0.9915096382957684 0.13003321562814005 -0.13003321562814005 0.9915096382957684 15.419854232075359 23.970642249905524)" stroke-width="2.28" stroke-miterlimit="3" stroke="#fff" fill="#000000" d="M0,0 L10.85,6.04 " />
+									<path transform="matrix(0.9926024522949254 -0.12140993245241759 0.12140993245241759 0.9926024522949254 25.528058759919183 30.115229863680206)" stroke-width="2.05" stroke-miterlimit="3" stroke="#000000" fill="#fff" d="M0,0 L-5.59,6.53 " />
+									<path transform="matrix(0.9582582150495895 -0.28590416801784246 0.28590416801784246 0.9582582150495895 29.19762323604641 11.643998448916042)" stroke-width="2.07" stroke-miterlimit="3" stroke="#000000" fill="#fff" d="M0,0 L4.36,5.74 " />
+									<path transform="matrix(0.9582582150495895 -0.2859041680178422 0.2859041680178422 0.9582582150495895 33.93803294535569 15.685719794526246)" stroke-width="2" stroke-miterlimit="3" stroke="#fff" fill="#000000" d="M0,0 L5.67,-3.76 " />
+									<path transform="matrix(1 0 0 1 25.17119244391997 8.595041322314046)" stroke-width="2" stroke-miterlimit="3" stroke="#fff" fill="#000000" d="M0,0 L-8.17,-0.43 " />
+									<path transform="matrix(1 0 0 1 17.756788665879938 7.8866587957497)" stroke-width="2" stroke-miterlimit="3" stroke="#000000" fill="#fff" d="M0,0 L-4.11,4.96 " />
+									<path transform="matrix(1 0 0 1 27.29634002361319 2.8807556080283296)" stroke-width="2" stroke-miterlimit="3" stroke="#000000" fill="#fff" d="M0,3.37 C0,1.51 1.52,0 3.39,0 C5.27,0 6.79,1.51 6.79,3.37 C6.79,5.23 5.27,6.74 3.39,6.74 C1.52,6.74 0,5.23 0,3.37 Z " />
+									<path transform="matrix(1 0 0 1 11.569843648486714 11.684357142408704)" stroke-miterlimit="3" stroke="#000000" fill="#fff" d="M0,0 L-8.74,0.05 " />
+									<path transform="matrix(1 0 0 1 11.33412042502955 15.631641086186534)" stroke-miterlimit="3" stroke="#fff" fill="#fff" d="M0,0 L-8.50,0 " />
+									<path transform="matrix(1 0 0 1 11.381345926800485 19.64580873671782)" stroke-width="1.05" stroke-miterlimit="3" stroke="#fff" fill="#000000" d="M0,0 L-8.64,0.05 " />
+								</svg>
+								<label id="playSpeedLabel">
+									<div id="playSpeedPresets">
+										<button type="button" class="tlBtn" onclick="setDirectPlaySpeed(8)">8x</button>
+										<button type="button" class="tlBtn" onclick="setDirectPlaySpeed(4)">4x</button>
+										<button type="button" class="tlBtn" onclick="setDirectPlaySpeed(2)">2x</button>
+										<button type="button" class="tlBtn" onclick="setDirectPlaySpeed(1)">1x</button>
+										<button type="button" class="tlBtn" onclick="setDirectPlaySpeed(0.5)">0.5x</button>
+										<button type="button" class="tlBtn" onclick="setDirectPlaySpeed(0.25)">0.25x</button>
+									</div>
+									<input id="playSpeed" orient="vertical" type="range" min="0.7" max="7" step="0.05" value="1" oninput="onPlaySpeedChange()" />
+								</label>
+							</div>
 						</div>
 					</div>
 				</div>
@@ -569,9 +713,9 @@
 				<div style="background: #433f4a; padding: 10px 14px; border-bottom: 1px solid #34313a; display: flex; justify-content: space-between; align-items: center; border-radius: 3px 3px 0 0;">
 					<div style="font-weight: bold; font-size: 13px; color: #fff; display: flex; align-items: center; gap: 10px;">
 						<span id="lblBvrModalTitle">BVR Timer List</span>
-						<div style="display: flex; background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.15); border-radius: 3px; padding: 2px; gap: 2px;">
-							<button id="btnBvrModeIndividual" type="button" onclick="switchBVRFocusMode('individual')" style="background: #00e5ff; color: #000; border: none; border-radius: 2px; font-size: 10px; font-weight: bold; padding: 2px 8px; cursor: pointer;">Individual</button>
-							<button id="btnBvrModeAcumulado" type="button" onclick="switchBVRFocusMode('acumulado')" style="background: transparent; color: #aaa; border: none; border-radius: 2px; font-size: 10px; font-weight: bold; padding: 2px 8px; cursor: pointer;">Cumulative</button>
+						<div style="display: flex; background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.15); border-radius: 2px; padding: 2px; gap: 2px;">
+							<button id="btnBvrModeIndividual" type="button" onclick="switchBVRFocusMode('individual')" style="background: #3a5250; color: #fff; border: 1px solid #8fa3a1; border-radius: 2px; font-size: 10px; font-weight: bold; padding: 2px 8px; cursor: pointer;">Individual</button>
+							<button id="btnBvrModeAcumulado" type="button" onclick="switchBVRFocusMode('acumulado')" style="background: transparent; color: #aaa; border: 1px solid transparent; border-radius: 2px; font-size: 10px; font-weight: bold; padding: 2px 8px; cursor: pointer;">Cumulative</button>
 						</div>
 					</div>
 					<button onclick="closeBVRFocusModal()" style="background: none; border: none; color: #ccc; font-size: 18px; font-weight: bold; cursor: pointer; padding: 0 4px;">&times;</button>
