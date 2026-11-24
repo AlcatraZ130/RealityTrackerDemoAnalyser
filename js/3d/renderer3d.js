@@ -47,7 +47,7 @@ class Renderer3d extends Initializable {
         return true;
     }
 
-    getInitializationList() { return [skyboxRenderer, terrainRenderer, building3dRenderer, water3dRenderer, geometry2dRenderer, entities3dRenderer, lines3dRenderer, hud3d]; }
+    getInitializationList() { return [skyboxRenderer, terrainRenderer, building3dRenderer, water3dRenderer, geometry2dRenderer, entities3dRenderer, lines3dRenderer, smoke3dRenderer, hud3d]; }
     getDependencyList() { return [heightmap]; }
 
     init() {
@@ -709,6 +709,12 @@ class Renderer3d extends Initializable {
         gl.disable(gl.BLEND);
 
         this._renderFullscreenVolumetricPass(vc, hasOutline, useSsao, useFog, fogCfg, fogOrigin);
+
+        // 3b. Volumetric 3D Smoke Screens rendered AFTER SSAO (soft-particle depth tested against sceneDepthTex)
+        //     Eliminates SSAO bleed-through behind transparent smoke and blends smoothly with terrain/walls.
+        if (typeof smoke3dRenderer !== "undefined" && smoke3dRenderer.initialized) {
+            smoke3dRenderer.draw(useFog, fogCfg, fogOrigin);
+        }
 
         if (useFxaa) {
             gl.bindFramebuffer(gl.FRAMEBUFFER, null);

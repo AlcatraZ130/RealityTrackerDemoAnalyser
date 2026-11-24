@@ -285,8 +285,12 @@ class Renderer2d {
 
 		for (var i in AllCaches)
 			drawCache(i)
+		if (typeof drawSmokeScreens2D === "function")
+			drawSmokeScreens2D()
 		for (var i in AllProj)
 			drawProj(i)
+		if (typeof drawExplosions2D === "function")
+			drawExplosions2D()
 
 		//Draw selected player above everyone else
 		if (SelectedPlayer != SELECTED_NOTHING)
@@ -796,7 +800,18 @@ function drawVehicle(i)
 
 	var x = v.getCanvasX();
 	var y = v.getCanvasY();
-	const rot = v.getRotation();
+	let rot = v.getRotation();
+	if (v.ns_isStationaryWeapon && v.Passengers && v.Passengers.size > 0) {
+		let opPlayer = null;
+		v.Passengers.forEach((pid) => {
+			const p = AllPlayers[pid];
+			if (!p || !p.isAlive) return;
+			if (!opPlayer || p.vehicleSlot === 0) opPlayer = p;
+		});
+		if (opPlayer && typeof opPlayer.getRotation === "function") {
+			rot = opPlayer.getRotation();
+		}
+	}
 
 	var color
 	// if vehicle is selected 
@@ -815,13 +830,18 @@ function drawVehicle(i)
 		y = clamp(CameraY, y, CameraY + MapImageDrawSize)
 	}
 
+	if (!v.ns_mapImage && v.ns_mapIconKey && coloredIcons[v.ns_mapIconKey]) {
+		v.ns_mapImage = coloredIcons[v.ns_mapIconKey];
+	}
+	const mapImg = (v.ns_mapImage && v.ns_mapImage[color]) ? v.ns_mapImage[color] : null;
+	if (!mapImg)
+		return;
+
 	Context.save()
 	Context.translate(x, y)
 	if (!v.isUAVVehicle)
 		Context.rotate(rot / 180 * Math.PI)
-	const mapImg = (v.ns_mapImage && v.ns_mapImage[color]) ? v.ns_mapImage[color] : (coloredIcons["mini_shp_light"] && coloredIcons["mini_shp_light"][color]);
-	if (mapImg)
-		Context.drawImage(mapImg, -16, -16, 32, 32)
+	Context.drawImage(mapImg, -16, -16, 32, 32)
 	Context.restore()
 
 	if (v.isFlyingVehicle && options_DrawVehicleHeight)
@@ -924,6 +944,15 @@ function drawProj(i)
 	{
 		Context.save()
 		Context.translate(x, y)
+		if (proj.type === 38) {
+			// High-visibility fuse ring for live hand frag grenades (4.4s fuse)
+			const pulse = 0.55 + 0.45 * Math.sin(performance.now() * 0.015);
+			Context.beginPath();
+			Context.arc(0, 0, 10, 0, Math.PI * 2);
+			Context.strokeStyle = `rgba(255, 168, 48, ${(0.55 + 0.35 * pulse).toFixed(2)})`;
+			Context.lineWidth = 1.6;
+			Context.stroke();
+		}
 		if (proj.ns_shouldRotate)
 			Context.rotate(proj.rotation / 180 * Math.PI)
 		Context.drawImage(proj.ns_icon[color], -8, -8) 
@@ -942,6 +971,138 @@ function drawProj(i)
 		Context.lineTo(x-4, y+4)
 		Context.stroke()
 		Context.restore()
+	}
+}
+
+function drawSmokeScreens2D()
+{
+	if (typeof syncBurningSmokeScreensFromAllProj === "function") {
+		syncBurningSmokeScreensFromAllProj();
+	}
+	if (typeof ns_activeSmokeScreens3D === "undefined" || ns_activeSmokeScreens3D.length === 0) return;
+	if (typeof computeSmokeCloudState !== "function") return;
+
+	const currentT = (typeof Tick_Current !== "undefined" && typeof tickToTime !== "undefined" && tickToTime[Tick_Current] != null)
+		? tickToTime[Tick_Current]
+		: (performance.now() / 1000.0);
+
+	Context.save();
+	try {
+		for (let i = ns_activeSmokeScreens3D.length - 1; i >= 0; i--) {
+			const smk = ns_activeSmokeScreens3D[i];
+			if (!smk) continue;
+
+			// Track bouncing burning smoke canister live while still in AllProj
+			if (smk.projId != null && typeof AllProj !== "undefined" && AllProj[smk.projId]) {
+				const liveP = AllProj[smk.projId];
+				const lx = (typeof liveP.getX === "function") ? liveP.getX() : liveP.X;
+				const lz = (typeof liveP.getZ === "function") ? liveP.getZ() : liveP.Z;
+				if (lx != null && !isNaN(lx) && lz != null && !isNaN(lz)) {
+					smk.x = lx;
+					smk.z = lz;
+				}
+			}
+
+			let elapsed = 0;
+			if (typeof tickToTime !== "undefined" && tickToTime[Tick_Current] != null && smk.startTimeSeconds > 0) {
+				elapsed = currentT - smk.startTimeSeconds;
+			} else {
+				elapsed = (performance.now() - smk.spawnTime) / 1000.0;
+			}
+
+			if (elapsed < 0 || elapsed >= smk.totalDuration) {
+				if (elapsed >= smk.totalDuration) {
+					ns_activeSmokeScreens3D.splice(i, 1);
+				}
+				continue;
+			}
+
+			const st = computeSmokeCloudState(smk, elapsed);
+			if (!st.visible || st.alpha <= 0.02) continue;
+
+			const cx = XtoCanvas(smk.x);
+			const cy = YtoCanvas(smk.z);
+			if (isNaN(cx) || isNaN(cy)) continue;
+
+			const col = Array.isArray(smk.color) ? smk.color : [0.95, 0.96, 0.98];
+			const isNeutralWhite = (Math.abs(col[0] - col[1]) < 0.06 && Math.abs(col[1] - col[2]) < 0.06);
+			const r255 = isNeutralWhite ? 245 : Math.round(Math.min(1.0, col[0]) * 255);
+			const g255 = isNeutralWhite ? 248 : Math.round(Math.min(1.0, col[1]) * 255);
+			const b255 = isNeutralWhite ? 252 : Math.round(Math.min(1.0, col[2]) * 255);
+
+			// Clean 2D white wave: expands during propagation/burst, holds at peak, and contracts smoothly while dissipating
+			const peakEnd = (smk.mode === "burning") ? (smk.burnEnd || 60.0) : (smk.peakDuration || 40.0);
+			let waveScale = st.radiusScale;
+			if (elapsed > peakEnd) {
+				const fadeP = Math.max(0.0, Math.min(1.0, (elapsed - peakEnd) / Math.max(0.1, smk.totalDuration - peakEnd)));
+				waveScale = Math.max(0.06, 1.0 - fadeP * 0.92);
+			}
+
+			const radPx = Math.max(3.0, lengthtoCanvas(smk.maxRadius * waveScale));
+			const alpha = Math.max(0.0, Math.min(1.0, st.alpha));
+
+			// Soft white inner fill
+			const grad = Context.createRadialGradient(cx, cy, 0, cx, cy, radPx);
+			grad.addColorStop(0.0, `rgba(${r255}, ${g255}, ${b255}, ${(alpha * 0.42).toFixed(3)})`);
+			grad.addColorStop(0.55, `rgba(${r255}, ${g255}, ${b255}, ${(alpha * 0.24).toFixed(3)})`);
+			grad.addColorStop(1.0, `rgba(${r255}, ${g255}, ${b255}, 0)`);
+			Context.fillStyle = grad;
+			Context.beginPath();
+			Context.arc(cx, cy, radPx, 0, Math.PI * 2);
+			Context.fill();
+
+			// Crisp white outer wave ring (matches 2D frag wave style)
+			Context.beginPath();
+			Context.arc(cx, cy, radPx, 0, Math.PI * 2);
+			Context.strokeStyle = `rgba(${r255}, ${g255}, ${b255}, ${(alpha * 0.82).toFixed(3)})`;
+			Context.lineWidth = 1.6;
+			Context.stroke();
+		}
+	} finally {
+		Context.restore();
+	}
+}
+
+function drawExplosions2D()
+{
+	if (typeof ns_activeExplosions3D === "undefined" || ns_activeExplosions3D.length === 0) return;
+
+	const now = performance.now();
+	Context.save();
+	try {
+		for (let i = ns_activeExplosions3D.length - 1; i >= 0; i--) {
+			const exp = ns_activeExplosions3D[i];
+			if (!exp) continue;
+			const elapsed = (now - exp.spawnTime) / 1000.0;
+			if (elapsed < 0 || elapsed >= exp.duration) {
+				if (elapsed >= exp.duration) ns_activeExplosions3D.splice(i, 1);
+				continue;
+			}
+			const p = elapsed / exp.duration;
+			const ease = 1.0 - Math.pow(1.0 - p, 2.2);
+			const radPx = Math.max(3.0, lengthtoCanvas(exp.maxRadius * ease));
+			const cx = XtoCanvas(exp.x);
+			const cy = YtoCanvas(exp.z);
+			if (isNaN(cx) || isNaN(cy)) continue;
+
+			const alpha = Math.pow(1.0 - p, 1.4);
+			const grad = Context.createRadialGradient(cx, cy, 0, cx, cy, radPx);
+			grad.addColorStop(0.0, `rgba(255, 224, 130, ${(alpha * 0.75).toFixed(3)})`);
+			grad.addColorStop(0.45, `rgba(255, 128, 36, ${(alpha * 0.45).toFixed(3)})`);
+			grad.addColorStop(1.0, `rgba(255, 80, 20, 0)`);
+			Context.fillStyle = grad;
+			Context.beginPath();
+			Context.arc(cx, cy, radPx, 0, Math.PI * 2);
+			Context.fill();
+
+			Context.beginPath();
+			Context.arc(cx, cy, radPx, 0, Math.PI * 2);
+			Context.strokeStyle = `rgba(255, 196, 82, ${(alpha * 0.85).toFixed(3)})`;
+			Context.lineWidth = exp.isHuge ? 2.2 : 1.5;
+			Context.stroke();
+		}
+	} finally {
+		Context.restore();
 	}
 }
 

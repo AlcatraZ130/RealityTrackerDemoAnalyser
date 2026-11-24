@@ -1368,7 +1368,14 @@ class Entities3dRenderer extends Initializable {
                     posY = Math.max(posY, gh + 0.15);
                 }
 
-                let meshKey = (typeof ProjectileTypeToImageName !== "undefined" && ProjectileTypeToImageName[proj.type]) || "proj_lat";
+                const tLow = (proj.templateName || "").toLowerCase();
+                const isSmkProj = (proj.type === 39 || proj.type === 41 || tLow.includes("smoke") || tLow.includes("smk") || tLow.includes("ugd"));
+                const isTankShell = (proj.type === 40 && !isSmkProj) || tLow.startsWith("tnk_");
+                let meshKey = isSmkProj
+                    ? "proj_smoke"
+                    : (isTankShell
+                        ? "proj_tankshell"
+                        : ((typeof ProjectileTypeToImageName !== "undefined" && ProjectileTypeToImageName[proj.type]) || "proj_lat"));
                 let activeMesh = this.gpuMeshCache[meshKey];
                 if (!activeMesh) {
                     this.fetchModelAsync(meshKey);

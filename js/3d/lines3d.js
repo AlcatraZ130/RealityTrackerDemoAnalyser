@@ -53,7 +53,199 @@ function trigger3DLaunchSmoke(x, y, z, projType, templateName) {
     }
 }
 
-function trigger3DExplosion(x, y, z, projType, templateName) {
+function isSmokeProjectile(projType, templateName) {
+    const tName = (templateName || "").toLowerCase();
+    const type = Number(projType || 0);
+    return (type === 39 || type === 41 || tName.includes("smoke") || tName.includes("smk") || tName.includes("ugd"));
+}
+
+function isBurningSmokeProjectile(projType, templateName) {
+    if (!isSmokeProjectile(projType, templateName)) return false;
+    const tName = (templateName || "").toLowerCase();
+    const type = Number(projType || 0);
+    // Instant-burst detonation smokes (vehicle M82/M82_brightIR, mortar smoke shell, tank smoke shell)
+    if (type === 41 || type === 37 || type === 40) return false;
+    if (tName === "m82" || tName.startsWith("m82_") || tName.includes("mortar") || tName.includes("tnk_")) return false;
+    // Continuous-emitter soldier smokes (40mm_smoke, riflegrenade_smoke, plhgr_ugd200*, m18, rdg, l83, hgr_smoke)
+    return true;
+}
+
+function getSmokeColorRGB(templateName) {
+    const tName = (templateName || "").toLowerCase();
+    if (tName.includes("ugd200red") || tName.includes("signalred") || tName.includes("_red")) return [0.84, 0.34, 0.32];
+    if (tName.includes("purple") || tName.includes("ugd200")) return [0.66, 0.44, 0.78];
+    if (tName.includes("green")) return [0.38, 0.72, 0.42];
+    if (tName.includes("orange")) return [0.88, 0.56, 0.28];
+    if (tName.includes("blue")) return [0.38, 0.58, 0.84];
+    if (tName.includes("brown")) return [0.68, 0.52, 0.38];
+    if (tName.includes("yellow")) return [0.88, 0.82, 0.36];
+    return [0.90, 0.89, 0.87];
+}
+
+function computeSmokeCloudState(smk, elapsed) {
+    if (!smk || elapsed < 0 || elapsed >= smk.totalDuration) {
+        return { visible: false, alpha: 0, radiusScale: 0, heightScale: 0 };
+    }
+    if (smk.mode === "burning") {
+        const emitDelay = smk.emitDelay || 2.0;
+        const mainDelay = smk.mainDelay || 6.0;
+        const fullSpread = smk.fullSpreadTime || 20.0;
+        const burnEnd = smk.burnEnd || 60.0;
+
+        if (elapsed < emitDelay) {
+            return { visible: false, alpha: 0, radiusScale: 0, heightScale: 0 };
+        }
+        if (elapsed < mainDelay) {
+            const t = (elapsed - emitDelay) / Math.max(0.1, mainDelay - emitDelay);
+            return {
+                visible: true,
+                radiusScale: 0.10 + 0.24 * t,
+                heightScale: 0.12 + 0.24 * t,
+                alpha: 0.48 * t
+            };
+        }
+        if (elapsed < fullSpread) {
+            const t = (elapsed - mainDelay) / Math.max(0.1, fullSpread - mainDelay);
+            const easeR = 1.0 - Math.pow(1.0 - t, 2.0);
+            const easeH = 1.0 - Math.pow(1.0 - t, 1.8);
+            return {
+                visible: true,
+                radiusScale: 0.34 + 0.66 * easeR,
+                heightScale: 0.36 + 0.64 * easeH,
+                alpha: 0.48 + 0.40 * t
+            };
+        }
+        if (elapsed <= burnEnd) {
+            return { visible: true, radiusScale: 1.0, heightScale: 1.0, alpha: 0.88 };
+        }
+        const fadeP = (elapsed - burnEnd) / Math.max(0.1, smk.totalDuration - burnEnd);
+        return {
+            visible: true,
+            radiusScale: 1.0 + fadeP * 0.28,
+            heightScale: 1.0 + fadeP * 0.22,
+            alpha: 0.88 * Math.pow(Math.max(0.0, 1.0 - fadeP), 1.35)
+        };
+    }
+
+    // Instant-burst mode (vehicle M82 / M82_brightIR, mortar smoke, tank smoke)
+    const burstTime = smk.burstTime || 1.8;
+    const peakDur = smk.peakDuration || 40.0;
+    if (elapsed < burstTime) {
+        const expP = elapsed / Math.max(0.1, burstTime);
+        return {
+            visible: true,
+            radiusScale: 0.30 + 0.70 * (1.0 - Math.pow(1.0 - expP, 2.5)),
+            heightScale: 0.30 + 0.70 * expP,
+            alpha: 0.90 * expP
+        };
+    }
+    if (elapsed <= peakDur) {
+        return { visible: true, radiusScale: 1.0, heightScale: 1.0, alpha: 0.88 };
+    }
+    const fadeP = (elapsed - peakDur) / Math.max(0.1, smk.totalDuration - peakDur);
+    return {
+        visible: true,
+        radiusScale: 1.0 + fadeP * 0.35,
+        heightScale: 1.0 + fadeP * 0.25,
+        alpha: 0.88 * Math.pow(Math.max(0.0, 1.0 - fadeP), 1.3)
+    };
+}
+
+function _buildSmokeLobes(scaleMult) {
+    const lobes = [];
+    const numLobes = 9;
+    const s = scaleMult || 1.0;
+    for (let i = 0; i < numLobes; i++) {
+        const ang = (i / numLobes) * Math.PI * 2 + (Math.random() * 0.3 - 0.15);
+        const dist = (2.3 + Math.random() * 2.6) * s;
+        lobes.push({
+            dx: Math.cos(ang) * dist,
+            dz: Math.sin(ang) * dist,
+            dy: ((i % 2 === 0 ? 0.8 : 2.4) + Math.random() * 1.1) * s,
+            baseR: (3.4 + Math.random() * 1.1) * s
+        });
+    }
+    return lobes;
+}
+
+function triggerBurningSmokeScreen(projId, x, y, z, projType, templateName, customStartTimeSec = null) {
+    if (x == null || isNaN(x) || z == null || isNaN(z)) return;
+    if (customStartTimeSec == null && typeof isFastForwarding !== "undefined" && isFastForwarding) return;
+
+    // Avoid duplicate entry for the same projectile ID
+    for (let i = 0; i < ns_activeSmokeScreens3D.length; i++) {
+        if (ns_activeSmokeScreens3D[i] && ns_activeSmokeScreens3D[i].projId === projId) return;
+    }
+
+    let worldY = y;
+    if (worldY == null || isNaN(worldY) || worldY <= 0) {
+        worldY = (typeof heightmap !== "undefined") ? (heightmap.getHeightFromCoords(x, z) + 0.2) : 0.2;
+    }
+
+    const tName = (templateName || "").toLowerCase();
+    const is40mm = tName.includes("40mm") || tName.includes("riflegrenade");
+    const burnEnd = is40mm ? 53.0 : 60.0;
+    const fadeDuration = is40mm ? 15.0 : 18.0;
+    const maxRadius = is40mm ? 6.0 : 7.5;
+    const maxHeight = is40mm ? 6.5 : 7.5;
+
+    const nowSec = (customStartTimeSec != null && customStartTimeSec > 0)
+        ? customStartTimeSec
+        : ((typeof Tick_Current !== "undefined" && typeof tickToTime !== "undefined" && tickToTime[Tick_Current] != null)
+            ? tickToTime[Tick_Current]
+            : (performance.now() / 1000.0));
+
+    ns_activeSmokeScreens3D.push({
+        projId: projId,
+        mode: "burning",
+        x: x,
+        y: worldY,
+        z: z,
+        color: getSmokeColorRGB(templateName),
+        spawnTime: performance.now(),
+        startTick: (typeof Tick_Current !== "undefined") ? Tick_Current : 0,
+        startTimeSeconds: nowSec,
+        emitDelay: 2.0,
+        mainDelay: 6.0,
+        fullSpreadTime: is40mm ? 18.0 : 20.0,
+        burnEnd: burnEnd,
+        fadeDuration: fadeDuration,
+        totalDuration: burnEnd + fadeDuration,
+        maxHeight: maxHeight,
+        maxRadius: maxRadius,
+        lobes: _buildSmokeLobes(is40mm ? 0.85 : 1.0)
+    });
+
+    if (ns_activeSmokeScreens3D.length > 50) {
+        ns_activeSmokeScreens3D.shift();
+    }
+}
+
+function syncBurningSmokeScreensFromAllProj() {
+    if (typeof AllProj === "undefined" || !AllProj) return;
+    for (const projId in AllProj) {
+        const proj = AllProj[projId];
+        if (!proj) continue;
+        if (!isBurningSmokeProjectile(proj.type, proj.templateName)) continue;
+        const numId = Number(projId);
+        let exists = false;
+        for (let i = 0; i < ns_activeSmokeScreens3D.length; i++) {
+            const s = ns_activeSmokeScreens3D[i];
+            if (s && (s.projId === numId || s.projId === projId)) {
+                exists = true;
+                break;
+            }
+        }
+        if (!exists) {
+            const px = (typeof proj.getX === "function") ? proj.getX() : proj.X;
+            const py = (typeof proj.getY === "function") ? proj.getY() : proj.Y;
+            const pz = (typeof proj.getZ === "function") ? proj.getZ() : proj.Z;
+            triggerBurningSmokeScreen(numId, px, py, pz, proj.type, proj.templateName, proj.spawnTimeSec || null);
+        }
+    }
+}
+
+function trigger3DExplosion(x, y, z, projType, templateName, projId = null) {
     if (x == null || isNaN(x) || z == null || isNaN(z)) return;
     if (typeof isFastForwarding !== "undefined" && isFastForwarding) return;
 
@@ -70,42 +262,57 @@ function trigger3DExplosion(x, y, z, projType, templateName) {
     const type = Number(projType || 0);
 
     // -------------------------------------------------------------------------
-    // Smoke Screen Grenades & Tank Smoke Screen Projectiles (Type 39, 41 or 'smoke')
+    // Smoke Screen Grenades & Tank Smoke Screen Projectiles
     // -------------------------------------------------------------------------
-    const isSmoke = (type === 39 || type === 41 || tName.includes('smoke') || tName.includes('smk') || tName.includes('ugd'));
-    if (isSmoke) {
-        const lobes = [];
-        const numLobes = 9;
-        for (let i = 0; i < numLobes; i++) {
-            const ang = (i / numLobes) * Math.PI * 2 + (Math.random() * 0.3 - 0.15);
-            const dist = 2.5 + Math.random() * 2.8;
-            lobes.push({
-                dx: Math.cos(ang) * dist,
-                dz: Math.sin(ang) * dist,
-                dy: (i % 2 === 0 ? 0.8 : 2.6) + Math.random() * 1.2,
-                baseR: 3.6 + Math.random() * 1.2
-            });
-        }
-
+    if (isSmokeProjectile(type, tName)) {
         const nowSec = (typeof Tick_Current !== "undefined" && typeof tickToTime !== "undefined" && tickToTime[Tick_Current] != null)
             ? tickToTime[Tick_Current]
             : (performance.now() / 1000.0);
 
+        // If a burning soldier smoke screen already exists for this projId, transition it to dissipation
+        if (projId != null) {
+            for (let i = ns_activeSmokeScreens3D.length - 1; i >= 0; i--) {
+                const smk = ns_activeSmokeScreens3D[i];
+                if (smk && smk.projId === projId) {
+                    const elapsed = (smk.startTimeSeconds > 0) ? (nowSec - smk.startTimeSeconds) : ((performance.now() - smk.spawnTime) / 1000.0);
+                    smk.x = x;
+                    smk.y = worldY;
+                    smk.z = z;
+                    smk.projId = null;
+                    smk.burnEnd = Math.max(smk.fullSpreadTime || 18.0, elapsed);
+                    smk.totalDuration = smk.burnEnd + (smk.fadeDuration || 16.0);
+                    return;
+                }
+            }
+        }
+
+        // Instant-burst detonation smokes: vehicle M82 / M82_brightIR, mortar smoke, tank smoke shell
+        const isMortarSmoke = (type === 37 || tName.includes("mortar"));
+        const isTankShellSmoke = (type === 40 || tName.includes("tnk_"));
+        const maxRadius = isMortarSmoke ? 12.0 : (isTankShellSmoke ? 9.0 : 7.5);
+        const maxHeight = isMortarSmoke ? 10.0 : (isTankShellSmoke ? 8.5 : 8.0);
+        const peakDuration = isMortarSmoke ? 50.0 : (isTankShellSmoke ? 45.0 : 40.0);
+        const totalDuration = isMortarSmoke ? 85.0 : (isTankShellSmoke ? 75.0 : 70.0);
+
         ns_activeSmokeScreens3D.push({
+            projId: null,
+            mode: "burst",
             x: x,
             y: worldY,
             z: z,
+            color: getSmokeColorRGB(templateName),
             spawnTime: performance.now(),
             startTick: (typeof Tick_Current !== "undefined") ? Tick_Current : 0,
             startTimeSeconds: nowSec,
-            peakDuration: 40.0,   // Peak dense occlusion for 40 seconds
-            totalDuration: 70.0,  // Dissipates gradually from 40s to 70s (1m 10s)
-            maxHeight: 8.0,       // 8 meters high
-            maxRadius: 7.0,       // 7 meters radius
-            lobes: lobes
+            burstTime: isMortarSmoke ? 2.5 : 1.8,
+            peakDuration: peakDuration,
+            totalDuration: totalDuration,
+            maxHeight: maxHeight,
+            maxRadius: maxRadius,
+            lobes: _buildSmokeLobes(isMortarSmoke ? 1.45 : (isTankShellSmoke ? 1.15 : 1.0))
         });
 
-        if (ns_activeSmokeScreens3D.length > 40) {
+        if (ns_activeSmokeScreens3D.length > 50) {
             ns_activeSmokeScreens3D.shift();
         }
         return;
@@ -122,10 +329,12 @@ function trigger3DExplosion(x, y, z, projType, templateName) {
                    tName.includes('ag36') || tName.includes('frag') || tName.includes('mineap') ||
                    tName.includes('f1') || tName.includes('m67'));
 
-    let maxRadius = isHuge ? 16.0 : (isSmall ? 5.0 : 9.5);
-    let duration = isHuge ? 0.85 : (isSmall ? 0.45 : 0.65);
-    let debrisCount = isHuge ? 26 : (isSmall ? 10 : 18);
-    let burstSpeed = isHuge ? 26.0 : (isSmall ? 12.0 : 18.0);
+    let isFrag = (type === 38 || tName.includes('f1grenade') || tName.includes('m67') || tName.includes('l109') || tName.includes('rgo88') || tName.includes('of37') || tName.includes('dm51'));
+
+    let maxRadius = isHuge ? 16.0 : (isFrag ? 8.5 : (isSmall ? 5.5 : 9.5));
+    let duration = isHuge ? 0.85 : (isFrag ? 0.65 : (isSmall ? 0.45 : 0.65));
+    let debrisCount = isHuge ? 26 : (isFrag ? 14 : (isSmall ? 10 : 18));
+    let burstSpeed = isHuge ? 26.0 : (isFrag ? 15.0 : (isSmall ? 12.0 : 18.0));
 
     const particles = [];
     for (let i = 0; i < debrisCount; i++) {
@@ -150,6 +359,7 @@ function trigger3DExplosion(x, y, z, projType, templateName) {
         duration: duration,
         isHuge: isHuge,
         isSmall: isSmall,
+        isFrag: isFrag,
         particles: particles
     });
 
@@ -1704,30 +1914,37 @@ class Lines3dRenderer extends Initializable {
 
                 if (trail.length < 2) continue;
 
-                // Draw ribbon segments along the trail
+                // Draw ribbon segments along the trail (consistent white trail across all projectiles)
+                const isHandGrenade = (type === 38);
+                const isBurningSmoke = isBurningSmokeProjectile(type, proj.templateName);
+                const trR = 0.95;
+                const trG = 0.95;
+                const trB = 0.98;
+                const wScale = isHandGrenade ? 0.55 : (isBurningSmoke ? 0.55 : 1.0);
+                const aScale = isHandGrenade ? 0.85 : (isBurningSmoke ? 0.60 : 1.0);
                 for (let j = 0; j < trail.length - 1; j++) {
                     const p1 = trail[j];
                     const p2 = trail[j + 1];
                     const age1 = (now - p1.time) / 1200.0;
                     const age2 = (now - p2.time) / 1200.0;
 
-                    const alpha1 = Math.max(0.0, Math.pow(1.0 - age1, 1.5) * 0.75);
-                    const alpha2 = Math.max(0.0, Math.pow(1.0 - age2, 1.5) * 0.75);
+                    const alpha1 = Math.max(0.0, Math.pow(1.0 - age1, 1.5) * 0.75 * aScale);
+                    const alpha2 = Math.max(0.0, Math.pow(1.0 - age2, 1.5) * 0.75 * aScale);
 
                     if (alpha1 <= 0.01 && alpha2 <= 0.01) continue;
 
-                    // Expanding smoke ribbon width (thin near rocket, thicker behind)
-                    const w1 = 0.12 + age1 * 0.45;
-                    const w2 = 0.12 + age2 * 0.45;
+                    // Expanding ribbon width
+                    const w1 = (0.12 + age1 * 0.45) * wScale;
+                    const w2 = (0.12 + age2 * 0.45) * wScale;
 
                     // Draw 3D quad ribbon
                     const nz1 = -p1.z, nz2 = -p2.z;
-                    this.addTri(p1.x - w1, p1.y, nz1, p1.x + w1, p1.y, nz1, p2.x - w2, p2.y, nz2, 0.95, 0.95, 0.98, (alpha1 + alpha2) * 0.5);
-                    this.addTri(p1.x + w1, p1.y, nz1, p2.x + w2, p2.y, nz2, p2.x - w2, p2.y, nz2, 0.95, 0.95, 0.98, (alpha1 + alpha2) * 0.5);
+                    this.addTri(p1.x - w1, p1.y, nz1, p1.x + w1, p1.y, nz1, p2.x - w2, p2.y, nz2, trR, trG, trB, (alpha1 + alpha2) * 0.5);
+                    this.addTri(p1.x + w1, p1.y, nz1, p2.x + w2, p2.y, nz2, p2.x - w2, p2.y, nz2, trR, trG, trB, (alpha1 + alpha2) * 0.5);
                     
                     // Vertical ribbon cross for full 3D visibility from any angle
-                    this.addTri(p1.x, p1.y - w1, nz1, p1.x, p1.y + w1, nz1, p2.x, p2.y - w2, nz2, 0.95, 0.95, 0.98, (alpha1 + alpha2) * 0.5);
-                    this.addTri(p1.x, p1.y + w1, nz1, p2.x, p2.y + w2, nz2, p2.x, p2.y - w2, nz2, 0.95, 0.95, 0.98, (alpha1 + alpha2) * 0.5);
+                    this.addTri(p1.x, p1.y - w1, nz1, p1.x, p1.y + w1, nz1, p2.x, p2.y - w2, nz2, trR, trG, trB, (alpha1 + alpha2) * 0.5);
+                    this.addTri(p1.x, p1.y + w1, nz1, p2.x, p2.y + w2, nz2, p2.x, p2.y - w2, nz2, trR, trG, trB, (alpha1 + alpha2) * 0.5);
                 }
 
                 // Glowing rocket engine flare only for actual rockets/missiles (not hand grenades)
@@ -1740,73 +1957,9 @@ class Lines3dRenderer extends Initializable {
         }
 
         // ---------------------------------------------------------------------
-        // 5f. Realistic Volumetric 3D Smoke Screens (Tank Smoke & Smoke Grenades)
+        // 5f. Volumetric 3D Smoke Screens are rendered by dedicated Smoke3dRenderer
+        //     (js/3d/smoke3d.js) using PR's authentic anim_smoke2ground2.webp sprites.
         // ---------------------------------------------------------------------
-        if (typeof ns_activeSmokeScreens3D !== "undefined" && ns_activeSmokeScreens3D.length > 0) {
-            const currentT = (typeof Tick_Current !== "undefined" && typeof tickToTime !== "undefined" && tickToTime[Tick_Current] != null)
-                ? tickToTime[Tick_Current]
-                : (performance.now() / 1000.0);
-
-            for (let i = ns_activeSmokeScreens3D.length - 1; i >= 0; i--) {
-                const smk = ns_activeSmokeScreens3D[i];
-                if (!smk) continue;
-
-                let elapsed = 0;
-                if (typeof tickToTime !== "undefined" && tickToTime[Tick_Current] != null && smk.startTimeSeconds > 0) {
-                    elapsed = currentT - smk.startTimeSeconds;
-                } else {
-                    elapsed = (performance.now() - smk.spawnTime) / 1000.0;
-                }
-
-                if (elapsed < 0 || elapsed >= smk.totalDuration) {
-                    if (elapsed >= smk.totalDuration) {
-                        ns_activeSmokeScreens3D.splice(i, 1);
-                    }
-                    continue;
-                }
-
-                let alpha = 0.0;
-                let radiusScale = 1.0;
-                let heightScale = 1.0;
-
-                if (elapsed < 2.0) {
-                    const expP = elapsed / 2.0;
-                    radiusScale = 0.3 + 0.7 * (1.0 - Math.pow(1.0 - expP, 2.5));
-                    heightScale = 0.3 + 0.7 * expP;
-                    alpha = 0.90 * expP;
-                } else if (elapsed <= smk.peakDuration) {
-                    radiusScale = 1.0;
-                    heightScale = 1.0;
-                    alpha = 0.88;
-                } else {
-                    const fadeP = (elapsed - smk.peakDuration) / (smk.totalDuration - smk.peakDuration);
-                    radiusScale = 1.0 + fadeP * 0.35;
-                    heightScale = 1.0 + fadeP * 0.25;
-                    alpha = 0.88 * Math.pow(1.0 - fadeP, 1.3);
-                }
-
-                if (alpha > 0.02) {
-                    const coreR = smk.maxRadius * 0.85 * radiusScale;
-                    const coreH = smk.maxHeight * heightScale;
-                    const halfH = coreH * 0.5;
-
-                    // Core smoke pillar resting on ground and rising to coreH
-                    this.add3DSmokeDome(smk.x, smk.y + halfH * 0.95, smk.z, coreR, halfH, 0.94, 0.94, 0.96, alpha * 0.88, 5, 8);
-
-                    // Surrounding overlapping billowing lobes connecting seamlessly
-                    for (const lobe of smk.lobes) {
-                        const lx = smk.x + lobe.dx * radiusScale;
-                        const lz = smk.z + lobe.dz * radiusScale;
-                        const lr = lobe.baseR * radiusScale;
-                        const lobeH = (lobe.dy + lr * 0.5) * heightScale;
-                        const halfLobeH = lobeH * 0.5;
-                        const ly = smk.y + halfLobeH * 0.95;
-
-                        this.add3DSmokeDome(lx, ly, lz, lr, halfLobeH, 0.91, 0.91, 0.93, alpha * 0.78, 4, 7);
-                    }
-                }
-            }
-        }
 
         // ---------------------------------------------------------------------
         // 6. Movement Sound Radii (Real-time dynamic update in 3D matching 2D colors)

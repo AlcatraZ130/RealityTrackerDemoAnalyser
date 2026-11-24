@@ -200,8 +200,13 @@ function createColoredMapIcons()
 	
 	for (var projectileType in ProjectileTypeToImageName)
 		if (ProjectileTypeToImageName[projectileType] != null)
-			imagesToColor.add(ProjectileTypeToImageName[projectileType])
-	
+			imagesToColor.add(ProjectileTypeToImageName[projectileType]);
+
+	// Ensure stationary weapon minimap icons are always pre-colored even when only referenced via MenuIcon
+	const extraStwIcons = ["mini_stw_atgm", "mini_stw_aa_light", "mini_stw_aa_medium", "mini_stw_mortar", "mini_stw_mg"];
+	extraStwIcons.forEach((k) => {
+		imagesToColor.add(k);
+	});
 	
 	imagesToColor.forEach((name) => {
 		var tempImg = new Image()
@@ -222,6 +227,85 @@ function createColoredMapIcons()
 			tempImg.src = atlasDataUrl
 		}
 	})
+
+	// Crisp 32x32 PR-style tactical SVG icons for deployable fortifications/structures without atlas MiniMapIcon
+	const customDeployableSvgs = {
+		// Reinforced bunker / firebase / hideout / pillbox
+		svg_dep_bunker: '<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32" shape-rendering="crispEdges">'
+			+ '<polygon points="9,7 23,7 25,9 25,23 23,25 9,25 7,23 7,9" fill="#ffffff" stroke="#000000" stroke-width="2.4" paint-order="stroke"/>'
+			+ '<rect x="12" y="12" width="8" height="8" fill="#000000"/>'
+			+ '<rect x="14" y="14" width="4" height="4" fill="#ffffff"/>'
+			+ '</svg>',
+		// Command post / radio FOB
+		svg_dep_commandpost: '<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32" shape-rendering="crispEdges">'
+			+ '<rect x="8" y="10" width="16" height="14" fill="#ffffff" stroke="#000000" stroke-width="2.4" paint-order="stroke"/>'
+			+ '<rect x="15" y="4" width="2" height="7" fill="#ffffff" stroke="#000000" stroke-width="2.0" paint-order="stroke"/>'
+			+ '<rect x="11" y="14" width="10" height="2" fill="#000000"/>'
+			+ '<rect x="11" y="18" width="10" height="2" fill="#000000"/>'
+			+ '</svg>',
+		// Sandbag wall / foxhole: curved "(" arc of rounded pill-shaped sandbags
+		svg_dep_sandbags: '<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">'
+			+ '<g fill="#ffffff" stroke="#000000" stroke-width="2.2" paint-order="stroke">'
+			+ '<rect x="15" y="3" width="6.5" height="4.2" rx="2.1" transform="rotate(-38 18.2 5.1)"/>'
+			+ '<rect x="11" y="7.5" width="6.5" height="4.2" rx="2.1" transform="rotate(-68 14.2 9.6)"/>'
+			+ '<rect x="9.5" y="13.5" width="6.5" height="4.2" rx="2.1" transform="rotate(-90 12.7 15.6)"/>'
+			+ '<rect x="11" y="19.8" width="6.5" height="4.2" rx="2.1" transform="rotate(68 14.2 21.9)"/>'
+			+ '<rect x="15" y="24.5" width="6.5" height="4.2" rx="2.1" transform="rotate(38 18.2 26.6)"/>'
+			+ '<rect x="15.5" y="13.5" width="5.5" height="4.0" rx="2.0" transform="rotate(-90 18.2 15.5)"/>'
+			+ '</g>'
+			+ '</svg>',
+		// Razorwire barrier: overlapping coiled concertina loops with barbs
+		svg_dep_razorwire: '<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">'
+			+ '<g fill="none" stroke="#000000" stroke-width="4.2">'
+			+ '<ellipse cx="7.5" cy="16" rx="4.2" ry="6.2"/>'
+			+ '<ellipse cx="13.2" cy="16" rx="4.2" ry="6.2"/>'
+			+ '<ellipse cx="18.8" cy="16" rx="4.2" ry="6.2"/>'
+			+ '<ellipse cx="24.5" cy="16" rx="4.2" ry="6.2"/>'
+			+ '<path d="M5,10 L7,8 M13,9 L15,8 M19,9 L21,8 M25,10 L27,8 M6,22 L8,24 M14,22 L16,24 M20,22 L22,24 M25,22 L27,24" stroke-width="3.0" stroke-linecap="round"/>'
+			+ '</g>'
+			+ '<g fill="none" stroke="#ffffff" stroke-width="1.8">'
+			+ '<ellipse cx="7.5" cy="16" rx="4.2" ry="6.2"/>'
+			+ '<ellipse cx="13.2" cy="16" rx="4.2" ry="6.2"/>'
+			+ '<ellipse cx="18.8" cy="16" rx="4.2" ry="6.2"/>'
+			+ '<ellipse cx="24.5" cy="16" rx="4.2" ry="6.2"/>'
+			+ '<path d="M5,10 L7,8 M13,9 L15,8 M19,9 L21,8 M25,10 L27,8 M6,22 L8,24 M14,22 L16,24 M20,22 L22,24 M25,22 L27,24" stroke-width="1.2" stroke-linecap="round"/>'
+			+ '</g>'
+			+ '</svg>',
+		// Concrete roadblock / barrier
+		svg_dep_roadblock: '<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32" shape-rendering="crispEdges">'
+			+ '<rect x="5" y="11" width="22" height="10" fill="#ffffff" stroke="#000000" stroke-width="2.4" paint-order="stroke"/>'
+			+ '<rect x="9" y="14" width="4" height="4" fill="#000000"/>'
+			+ '<rect x="19" y="14" width="4" height="4" fill="#000000"/>'
+			+ '</svg>',
+		// Combat support bridge (CSB): long dual-trackway bridge with central gap and flared )( approaches
+		svg_dep_bridge: '<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">'
+			+ '<g fill="#ffffff" stroke="#000000" stroke-width="2.4" stroke-linejoin="miter" paint-order="stroke">'
+			+ '<polygon points="9,3 14,7 14,25 9,29 7,27 10,24 10,8 7,5"/>'
+			+ '<polygon points="23,3 25,5 22,8 22,24 25,27 23,29 18,25 18,7"/>'
+			+ '<rect x="13.5" y="10" width="5" height="2"/>'
+			+ '<rect x="13.5" y="15" width="5" height="2"/>'
+			+ '<rect x="13.5" y="20" width="5" height="2"/>'
+			+ '</g>'
+			+ '</svg>',
+		// Supply / logistics pallet crate with cargo straps
+		svg_dep_crate: '<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32" shape-rendering="crispEdges">'
+			+ '<rect x="5" y="8" width="22" height="16" fill="#ffffff" stroke="#000000" stroke-width="2.4" paint-order="stroke"/>'
+			+ '<rect x="10" y="9" width="2" height="14" fill="#000000"/>'
+			+ '<rect x="20" y="9" width="2" height="14" fill="#000000"/>'
+			+ '<rect x="6" y="13" width="20" height="1.8" fill="#000000"/>'
+			+ '<rect x="6" y="17.5" width="20" height="1.8" fill="#000000"/>'
+			+ '<rect x="14.5" y="10.5" width="3" height="2" fill="#000000"/>'
+			+ '</svg>'
+	};
+
+	Object.keys(customDeployableSvgs).forEach((svgKey) => {
+		const img = new Image();
+		img.onload = () => {
+			coloredIcons[svgKey] = colorImage(img);
+			if (typeof requestUpdate === "function") requestUpdate();
+		};
+		img.src = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(customDeployableSvgs[svgKey]);
+	});
 	
 }
 

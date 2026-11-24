@@ -587,20 +587,77 @@ class VehicleObject extends InterpolatedGameObject
 	}
 
 	initializeGraphics() {
-		this.ns_mapImage = coloredIcons["mini_shp_light"];
+		this.ns_mapImage = null;
 		this.ns_geomName = "";
 		this.ns_menuImage = null;
+		this.ns_isStationaryWeapon = false;
+
+		const vLow = (this.name || "").toLowerCase();
+		const isDeployableStruct = (
+			vLow.startsWith("deployable_") || vLow.startsWith("fixed_") || vLow.startsWith("stationary_") ||
+			vLow.includes("ats_") || vLow.includes("aas_") || vLow.includes("zu23") ||
+			vLow.includes("djigit") || vLow.includes("bipod")
+		);
 
 		if (this.name in vehicleData) {
-			const data = vehicleData[this.name]
-			this.ns_mapImage = coloredIcons[data.MiniMapIcon] || coloredIcons["mini_shp_light"] //Map Image is a must
+			const data = vehicleData[this.name];
+			let iconKey = (data.MiniMapIcon && data.MiniMapIcon !== "empty") ? data.MiniMapIcon : "";
+			if (!iconKey && data.MenuIcon && data.MenuIcon.startsWith("menuicon_")) {
+				const derived = "mini_" + data.MenuIcon.substring("menuicon_".length);
+				if (coloredIcons[derived]) iconKey = derived;
+			}
+			let isWeaponIcon = false;
+			if (!iconKey && isDeployableStruct) {
+				if (vLow.includes("tow") || vLow.includes("milan") || vLow.includes("kornet") || vLow.includes("hj8") || vLow.includes("spike") || vLow.includes("spg9")) {
+					iconKey = "mini_stw_atgm"; isWeaponIcon = true;
+				} else if (vLow.includes("zu23")) {
+					iconKey = "mini_stw_aa_medium"; isWeaponIcon = true;
+				} else if (vLow.includes("stinger") || vLow.includes("djigit") || vLow.includes("igla") || vLow.includes("mistral") || vLow.includes("_aa")) {
+					iconKey = "mini_stw_aa_light"; isWeaponIcon = true;
+				} else if (vLow.includes("mortar") || vLow.includes("podnos")) {
+					iconKey = "mini_stw_mortar"; isWeaponIcon = true;
+				} else if (vLow.includes("50cal") || vLow.includes("tripod") || vLow.includes("dshk") || vLow.includes("kord") || vLow.includes("m2hb") || vLow.includes("m1910") || vLow.includes("mg42") || vLow.includes("agl")) {
+					iconKey = "mini_stw_mg"; isWeaponIcon = true;
+				} else if (vLow.includes("commandpost") || vLow.includes("_fob")) {
+					iconKey = "svg_dep_commandpost";
+				} else if (vLow.includes("bunker") || vLow.includes("firebase") || vLow.includes("hideout") || vLow.includes("pillbox") || vLow.includes("outpost")) {
+					iconKey = "svg_dep_bunker";
+				} else if (vLow.includes("sandbag") || vLow.includes("foxhole")) {
+					iconKey = "svg_dep_sandbags";
+				} else if (vLow.includes("razorwire")) {
+					iconKey = "svg_dep_razorwire";
+				} else if (vLow.includes("roadblock")) {
+					iconKey = "svg_dep_roadblock";
+				} else if (vLow.includes("_csb_")) {
+					iconKey = "svg_dep_bridge";
+				} else if (vLow.includes("crate")) {
+					iconKey = "svg_dep_crate";
+				}
+			} else if (iconKey && isDeployableStruct && iconKey.startsWith("mini_stw_")) {
+				isWeaponIcon = true;
+			}
+
+			if (iconKey && coloredIcons[iconKey]) {
+				this.ns_mapImage = coloredIcons[iconKey];
+			} else if (iconKey && iconKey.startsWith("svg_dep_")) {
+				this.ns_mapIconKey = iconKey;
+			} else if (!isDeployableStruct) {
+				this.ns_mapImage = coloredIcons["mini_shp_light"];
+			}
+
+			if (isWeaponIcon) {
+				this.ns_isStationaryWeapon = true;
+			}
 			if (data.MenuIcon != "")
 				this.ns_menuImage = icons[data.MenuIcon] //Menuimage is optional
 			this.ns_geomName = data.Geometry;
 		}
-		else
+		else {
+			if (!isDeployableStruct) {
+				this.ns_mapImage = coloredIcons["mini_shp_light"];
+			}
 			console.log("Parser: Vehicle Name not in dictionary: " + this.name)
-			
+		}
     }
 
 	onLoadState() {
@@ -973,6 +1030,9 @@ class ProjObject extends InterpolatedGameObject
 		this.type = type
 		this.player = AllPlayers[playerid]
 		this.team = this.player ? this.player.team : 1 // so if player disconnects while projectile in air we still have team.
+		this.spawnTimeSec = (typeof Tick_Current !== "undefined" && typeof tickToTime !== "undefined" && tickToTime[Tick_Current] != null)
+			? tickToTime[Tick_Current]
+			: 0;
 		
 		
 		AllProj[id] = this
@@ -980,9 +1040,11 @@ class ProjObject extends InterpolatedGameObject
 	}
 
 	initializeNoState() {
-		this.ns_iconName = ProjectileTypeToImageName[this.type];
-		this.ns_icon = coloredIcons[ProjectileTypeToImageName[this.type]]
-		this.ns_shouldRotate = ProjectileTypeShouldRotate[this.type]
+		const tLow = (this.templateName || "").toLowerCase();
+		const isSmk = (this.type === 39 || this.type === 41 || tLow.includes("smoke") || tLow.includes("smk") || tLow.includes("ugd"));
+		this.ns_iconName = isSmk ? "proj_smoke" : ProjectileTypeToImageName[this.type];
+		this.ns_icon = this.ns_iconName ? coloredIcons[this.ns_iconName] : null;
+		this.ns_shouldRotate = isSmk ? false : ProjectileTypeShouldRotate[this.type];
 		this.ns_isFast = false
 	}
 	getTeamColor3d() {
@@ -1676,7 +1738,9 @@ function ProjAdd(FullMessage)
 			triggerShootingShockwave(parsed[5], parsed[7], radiusM, color, duration, shooterId, vehId);
 		}
 
-		if (typeof trigger3DLaunchSmoke === 'function' && parsed[5] != null && parsed[7] != null) {
+		if (typeof isBurningSmokeProjectile === "function" && typeof triggerBurningSmokeScreen === "function" && isBurningSmokeProjectile(parsed[2], parsed[3])) {
+			triggerBurningSmokeScreen(parsed[0], parsed[5], parsed[6], parsed[7], parsed[2], parsed[3]);
+		} else if (parsed[2] !== 38 && typeof trigger3DLaunchSmoke === 'function' && parsed[5] != null && parsed[7] != null) {
 			trigger3DLaunchSmoke(parsed[5], parsed[6], parsed[7], parsed[2], parsed[3]);
 		}
 	}
@@ -1694,7 +1758,7 @@ function ProjRemoved(FullMessage)
 			let px = (typeof proj.getX === "function") ? proj.getX() : proj.X;
 			let py = (typeof proj.getY === "function") ? proj.getY() : (proj.Y || 0);
 			let pz = (typeof proj.getZ === "function") ? proj.getZ() : proj.Z;
-			trigger3DExplosion(px, py, pz, proj.type, proj.templateName);
+			trigger3DExplosion(px, py, pz, proj.type, proj.templateName, index);
 		}
 		delete AllProj[index]
 	}
