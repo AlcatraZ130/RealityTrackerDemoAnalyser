@@ -89,7 +89,7 @@ function computeSmokeCloudState(smk, elapsed) {
     if (smk.mode === "burning") {
         const emitDelay = smk.emitDelay || 2.0;
         const mainDelay = smk.mainDelay || 6.0;
-        const fullSpread = smk.fullSpreadTime || 20.0;
+        const fullSpread = smk.fullSpreadTime || 30.0;
         const burnEnd = smk.burnEnd || 60.0;
 
         if (elapsed < emitDelay) {
@@ -184,7 +184,7 @@ function triggerBurningSmokeScreen(projId, x, y, z, projType, templateName, cust
 
     const tName = (templateName || "").toLowerCase();
     const is40mm = tName.includes("40mm") || tName.includes("riflegrenade");
-    const burnEnd = is40mm ? 53.0 : 60.0;
+    const burnEnd = 60.0;
     const fadeDuration = is40mm ? 15.0 : 18.0;
     const maxRadius = is40mm ? 6.0 : 7.5;
     const maxHeight = is40mm ? 6.5 : 7.5;
@@ -893,15 +893,15 @@ class Lines3dRenderer extends Initializable {
         }
 
         const spdKmh = (typeof getEntitySpeedKmh === "function") ? getEntitySpeedKmh(v) : 0;
-        const vName = (v.name || "").toLowerCase();
-        const isHeavy = vName.includes("tnk") || vName.includes("tank") || vName.includes("apc") || vName.includes("bmp") || vName.includes("btr");
-        const isHeli = vName.includes("heli") || vName.includes("uh60") || vName.includes("mi8") || vName.includes("ah1z");
+        const prof = (typeof getVehicleAcousticProfile === "function")
+            ? getVehicleAcousticProfile(v)
+            : { hasEngine: true, moveRadius: 250, idleRadius: 60 };
 
         let targetEngineRadiusM = 0;
         let targetOpacity = 0.0;
 
-        if (hasDriver) {
-            targetEngineRadiusM = spdKmh >= 2.0 ? (isHeli ? 800 : isHeavy ? 450 : 250) : (isHeli ? 300 : isHeavy ? 100 : 60);
+        if (hasDriver && prof.hasEngine) {
+            targetEngineRadiusM = spdKmh >= 2.0 ? prof.moveRadius : prof.idleRadius;
             targetOpacity = spdKmh >= 2.0 ? 0.50 : 0.25;
         }
 
@@ -945,7 +945,7 @@ class Lines3dRenderer extends Initializable {
         }
     }
 
-    add3D4KmLaser(eyeX, eyeY, eyeZ, rotDeg) {
+    add3D4KmLaser(eyeX, eyeY, eyeZ, rotDeg, skipBeam = false) {
         const rad = (rotDeg || 0) / 180.0 * Math.PI;
         const dirX = Math.sin(rad);
         const dirZ = Math.cos(rad);
@@ -1010,8 +1010,10 @@ class Lines3dRenderer extends Initializable {
             this.add3DTerrainRing(hitX, hitZ, 0.10, 0.26, r, g, b, 0.96, 16);
         }
 
-        // Draw 3D Laser Beam with High-Contrast Solid Black Outline
-        this.add3DLaserRibbon(eyeX, eyeY, -eyeZ, hitX, hitY, -hitZ, r, g, b, a, 0.08, true);
+        // Draw 3D Laser Beam with High-Contrast Solid Black Outline (skip beam in 1PV to keep view clear)
+        if (!skipBeam) {
+            this.add3DLaserRibbon(eyeX, eyeY, -eyeZ, hitX, hitY, -hitZ, r, g, b, a, 0.08, true);
+        }
     }
 
     add3DLaserRibbon(x1, y1, z1, x2, y2, z2, r, g, b, a, width = 0.08, hasOutline = true) {
@@ -1132,7 +1134,7 @@ class Lines3dRenderer extends Initializable {
         }
     }
 
-    add3DThreatLasers(entity, eyeX, eyeY, eyeZ, rotDeg, coneRangeM, coneAngleDeg, respectTerrainLOS = true) {
+    add3DThreatLasers(entity, eyeX, eyeY, eyeZ, rotDeg, coneRangeM, coneAngleDeg, respectTerrainLOS = true, fromChest1pv = false) {
         if (!entity) return;
         const rad = (rotDeg || 0) / 180.0 * Math.PI;
         const dirX = Math.sin(rad);
@@ -1217,11 +1219,13 @@ class Lines3dRenderer extends Initializable {
         }
 
         // Primary Central Gaze Laser: RED if an enemy is behind cover near gaze (No-LOS Alert), else CYAN/BLUE
-        const r = hasBlockedEnemyNearGaze ? 1.0 : 0.0;
-        const g = hasBlockedEnemyNearGaze ? 0.15 : 0.85;
-        const b = hasBlockedEnemyNearGaze ? 0.15 : 1.0;
-        const a = 0.90;
-        this.addLine(eyeX, eyeY, -eyeZ, targetX, eyeY, -targetZ, r, g, b, a);
+        if (!fromChest1pv) {
+            const r = hasBlockedEnemyNearGaze ? 1.0 : 0.0;
+            const g = hasBlockedEnemyNearGaze ? 0.15 : 0.85;
+            const b = hasBlockedEnemyNearGaze ? 0.15 : 1.0;
+            const a = 0.90;
+            this.addLine(eyeX, eyeY, -eyeZ, targetX, eyeY, -targetZ, r, g, b, a);
+        }
 
         // 2. Orange Threat Target Lasers to enemies INSIDE the 3D Vision Cone:
         //    Must be within 3D range, within Horizontal FOV (±47.45°), within Vertical FOV (±31.515°).
@@ -1274,7 +1278,8 @@ class Lines3dRenderer extends Initializable {
 
                 if (clearLOS) {
                     // Target is inside 3D vision cone and visible: draw orange threat laser beam
-                    this.addLine(eyeX, eyeY, -eyeZ, ox, otherEyeY, -oz, 1.0, 0.25, 0.05, 0.85);
+                    const origY = fromChest1pv ? (eyeY - 0.35) : eyeY;
+                    this.addLine(eyeX, origY, -eyeZ, ox, otherEyeY, -oz, 1.0, 0.25, 0.05, 0.85);
                 }
             }
         }
@@ -1530,9 +1535,9 @@ class Lines3dRenderer extends Initializable {
                 if (!v || !v.isFlyingVehicle || v.isClimbingVehicle) continue;
                 if (!showEmptyVehs && (!v.Passengers || v.Passengers.size === 0)) continue;
 
-                let vx = (typeof v.getX === "function") ? v.getX() : v.X;
+                let vx = (typeof v._smoothX === "number" && !isNaN(v._smoothX)) ? v._smoothX : ((typeof v.getX === "function") ? v.getX() : v.X);
                 let vy = (typeof v._smoothY === "number" && !isNaN(v._smoothY)) ? v._smoothY : ((typeof v.getY === "function") ? v.getY() : (v.Y || 0));
-                let vz = (typeof v.getZ === "function") ? v.getZ() : v.Z;
+                let vz = (typeof v._smoothZ === "number" && !isNaN(v._smoothZ)) ? v._smoothZ : ((typeof v.getZ === "function") ? v.getZ() : v.Z);
                 if (vx == null || isNaN(vx) || vz == null || isNaN(vz)) continue;
 
                 let groundH = 0;
@@ -1877,9 +1882,17 @@ class Lines3dRenderer extends Initializable {
 
         // ---------------------------------------------------------------------
         // 5e. 3D Projectile White Smoke Tracer Trails & Rocket Flares
+        //     Synced to pre-simulated 3D projectile tracks so trail ALWAYS stays behind model!
         // ---------------------------------------------------------------------
         if (typeof AllProj !== "undefined") {
             const now = performance.now();
+            const hasProjTrack = (typeof window.sampleProjTrack === "function");
+            const projTimeSec = (typeof entities3dRenderer !== "undefined" && entities3dRenderer && typeof entities3dRenderer._getContinuousPlaybackTimeSec === "function")
+                ? entities3dRenderer._getContinuousPlaybackTimeSec()
+                : ((typeof tickToTime !== "undefined" && typeof Tick_Current !== "undefined" && tickToTime.length > 0)
+                    ? tickToTime[Math.max(0, Math.min(Tick_Current - 1, tickToTime.length - 1))]
+                    : 0);
+
             for (const projId in AllProj) {
                 const proj = AllProj[projId];
                 if (!proj) continue;
@@ -1888,9 +1901,10 @@ class Lines3dRenderer extends Initializable {
                 const type = Number(proj.type || 0);
                 if (type < 30 && type !== 0) continue;
 
-                let px = (typeof proj.getX === "function") ? proj.getX() : proj.X;
-                let py = (typeof proj.getY === "function") ? proj.getY() : (proj.Y || 0);
-                let pz = (typeof proj.getZ === "function") ? proj.getZ() : proj.Z;
+                const ptNow = hasProjTrack ? window.sampleProjTrack(proj.id, projTimeSec) : null;
+                let px = ptNow ? ptNow.x : ((typeof proj.getX === "function") ? proj.getX() : proj.X);
+                let py = ptNow ? ptNow.y : ((typeof proj.getY === "function") ? proj.getY() : (proj.Y || 0));
+                let pz = ptNow ? ptNow.z : ((typeof proj.getZ === "function") ? proj.getZ() : proj.Z);
 
                 if (px == null || isNaN(px) || pz == null || isNaN(pz)) continue;
                 if (typeof heightmap !== "undefined") {
@@ -1898,56 +1912,88 @@ class Lines3dRenderer extends Initializable {
                     py = Math.max(py, gh + 0.15);
                 }
 
-                if (!proj._smokeTrail) proj._smokeTrail = [];
-                const trail = proj._smokeTrail;
+                let trailPts = null;
+                const trailDurSec = 1.15;
 
-                // Append new position sample if moved
-                const lastPt = trail.length > 0 ? trail[trail.length - 1] : null;
-                if (!lastPt || (Math.hypot(px - lastPt.x, py - lastPt.y, pz - lastPt.z) > 0.3)) {
-                    trail.push({ x: px, y: py, z: pz, time: now });
+                if (ptNow && ptNow.tStart != null) {
+                    // Build exact curved 3D trail strictly behind the projectile along its pre-simulated arc
+                    const tEnd = Math.min(projTimeSec, ptNow.tEnd != null ? ptNow.tEnd : projTimeSec);
+                    const tBegin = Math.max(ptNow.tStart, tEnd - trailDurSec);
+                    const span = tEnd - tBegin;
+                    if (span > 0.015) {
+                        const steps = Math.max(4, Math.min(16, Math.ceil(span * 14)));
+                        trailPts = [];
+                        for (let s = 0; s <= steps; s++) {
+                            const frac = s / steps;
+                            const ts = tBegin + frac * span;
+                            const sp = (s === steps) ? ptNow : window.sampleProjTrack(proj.id, ts);
+                            if (!sp) continue;
+                            let sy = sp.y;
+                            if (typeof heightmap !== "undefined") {
+                                sy = Math.max(sy, heightmap.getHeightFromCoords(sp.x, sp.z) + 0.15);
+                            }
+                            const age = Math.max(0.0, Math.min(1.0, (tEnd - ts) / trailDurSec));
+                            trailPts.push({ x: sp.x, y: sy, z: sp.z, age: age });
+                        }
+                    }
+                } else {
+                    if (!proj._smokeTrail) proj._smokeTrail = [];
+                    const trail = proj._smokeTrail;
+
+                    // Append new position sample if moved
+                    const lastPt = trail.length > 0 ? trail[trail.length - 1] : null;
+                    if (!lastPt || (Math.hypot(px - lastPt.x, py - lastPt.y, pz - lastPt.z) > 0.3)) {
+                        trail.push({ x: px, y: py, z: pz, time: now });
+                    }
+
+                    // Cull samples older than 1.2 seconds
+                    while (trail.length > 0 && (now - trail[0].time) > 1200) {
+                        trail.shift();
+                    }
+                    if (trail.length >= 2) {
+                        trailPts = trail.map((p) => ({
+                            x: p.x, y: p.y, z: p.z,
+                            age: Math.max(0.0, Math.min(1.0, (now - p.time) / 1200.0))
+                        }));
+                    }
                 }
 
-                // Cull samples older than 1.2 seconds
-                while (trail.length > 0 && (now - trail[0].time) > 1200) {
-                    trail.shift();
+                if (trailPts && trailPts.length >= 2) {
+                    // Draw ribbon segments along the trail (consistent white trail across all projectiles)
+                    const isHandGrenade = (type === 38);
+                    const isBurningSmoke = isBurningSmokeProjectile(type, proj.templateName);
+                    const trR = 0.95;
+                    const trG = 0.95;
+                    const trB = 0.98;
+                    const wScale = isHandGrenade ? 0.55 : (isBurningSmoke ? 0.55 : 1.0);
+                    const aScale = isHandGrenade ? 0.85 : (isBurningSmoke ? 0.60 : 1.0);
+                    for (let j = 0; j < trailPts.length - 1; j++) {
+                        const p1 = trailPts[j];
+                        const p2 = trailPts[j + 1];
+                        const age1 = p1.age;
+                        const age2 = p2.age;
+
+                        const alpha1 = Math.max(0.0, Math.pow(1.0 - age1, 1.5) * 0.75 * aScale);
+                        const alpha2 = Math.max(0.0, Math.pow(1.0 - age2, 1.5) * 0.75 * aScale);
+
+                        if (alpha1 <= 0.01 && alpha2 <= 0.01) continue;
+
+                        // Expanding ribbon width (narrowest right behind projectile, widening with age)
+                        const w1 = (0.12 + age1 * 0.45) * wScale;
+                        const w2 = (0.12 + age2 * 0.45) * wScale;
+
+                        // Draw 3D quad ribbon
+                        const nz1 = -p1.z, nz2 = -p2.z;
+                        this.addTri(p1.x - w1, p1.y, nz1, p1.x + w1, p1.y, nz1, p2.x - w2, p2.y, nz2, trR, trG, trB, (alpha1 + alpha2) * 0.5);
+                        this.addTri(p1.x + w1, p1.y, nz1, p2.x + w2, p2.y, nz2, p2.x - w2, p2.y, nz2, trR, trG, trB, (alpha1 + alpha2) * 0.5);
+
+                        // Vertical ribbon cross for full 3D visibility from any angle
+                        this.addTri(p1.x, p1.y - w1, nz1, p1.x, p1.y + w1, nz1, p2.x, p2.y - w2, nz2, trR, trG, trB, (alpha1 + alpha2) * 0.5);
+                        this.addTri(p1.x, p1.y + w1, nz1, p2.x, p2.y + w2, nz2, p2.x, p2.y - w2, nz2, trR, trG, trB, (alpha1 + alpha2) * 0.5);
+                    }
                 }
 
-                if (trail.length < 2) continue;
-
-                // Draw ribbon segments along the trail (consistent white trail across all projectiles)
-                const isHandGrenade = (type === 38);
-                const isBurningSmoke = isBurningSmokeProjectile(type, proj.templateName);
-                const trR = 0.95;
-                const trG = 0.95;
-                const trB = 0.98;
-                const wScale = isHandGrenade ? 0.55 : (isBurningSmoke ? 0.55 : 1.0);
-                const aScale = isHandGrenade ? 0.85 : (isBurningSmoke ? 0.60 : 1.0);
-                for (let j = 0; j < trail.length - 1; j++) {
-                    const p1 = trail[j];
-                    const p2 = trail[j + 1];
-                    const age1 = (now - p1.time) / 1200.0;
-                    const age2 = (now - p2.time) / 1200.0;
-
-                    const alpha1 = Math.max(0.0, Math.pow(1.0 - age1, 1.5) * 0.75 * aScale);
-                    const alpha2 = Math.max(0.0, Math.pow(1.0 - age2, 1.5) * 0.75 * aScale);
-
-                    if (alpha1 <= 0.01 && alpha2 <= 0.01) continue;
-
-                    // Expanding ribbon width
-                    const w1 = (0.12 + age1 * 0.45) * wScale;
-                    const w2 = (0.12 + age2 * 0.45) * wScale;
-
-                    // Draw 3D quad ribbon
-                    const nz1 = -p1.z, nz2 = -p2.z;
-                    this.addTri(p1.x - w1, p1.y, nz1, p1.x + w1, p1.y, nz1, p2.x - w2, p2.y, nz2, trR, trG, trB, (alpha1 + alpha2) * 0.5);
-                    this.addTri(p1.x + w1, p1.y, nz1, p2.x + w2, p2.y, nz2, p2.x - w2, p2.y, nz2, trR, trG, trB, (alpha1 + alpha2) * 0.5);
-                    
-                    // Vertical ribbon cross for full 3D visibility from any angle
-                    this.addTri(p1.x, p1.y - w1, nz1, p1.x, p1.y + w1, nz1, p2.x, p2.y - w2, nz2, trR, trG, trB, (alpha1 + alpha2) * 0.5);
-                    this.addTri(p1.x, p1.y + w1, nz1, p2.x, p2.y + w2, nz2, p2.x, p2.y - w2, nz2, trR, trG, trB, (alpha1 + alpha2) * 0.5);
-                }
-
-                // Glowing rocket engine flare only for actual rockets/missiles (not hand grenades)
+                // Glowing rocket engine flare locked to exact projectile position (not ahead!)
                 const tName = (proj.templateName || "").toLowerCase();
                 const isRocket = (type >= 32 && type <= 35) || tName.includes('rpg') || tName.includes('rocket') || tName.includes('missile') || tName.includes('tow') || tName.includes('lat') || tName.includes('hat');
                 if (isRocket) {
@@ -2036,22 +2082,22 @@ function getPlayerEyePos(p) {
 
     if (p.vehicleid >= 0 && typeof AllVehicles !== "undefined" && AllVehicles[p.vehicleid]) {
         const v = AllVehicles[p.vehicleid];
-        worldX = typeof v.getX === "function" ? v.getX() : (v.X || worldX);
-        worldZ = typeof v.getZ === "function" ? v.getZ() : (v.Z || worldZ);
+        worldX = (typeof v._smoothX === "number" && !isNaN(v._smoothX)) ? v._smoothX : (typeof v.getX === "function" ? v.getX() : (v.X || worldX));
+        worldZ = (typeof v._smoothZ === "number" && !isNaN(v._smoothZ)) ? v._smoothZ : (typeof v.getZ === "function" ? v.getZ() : (v.Z || worldZ));
         let vBaseH = (typeof v._smoothY === "number" && !isNaN(v._smoothY)) ? v._smoothY : ((typeof v.getY === "function") ? v.getY() : (v.Y || 0));
         let vGroundH = (typeof heightmap !== "undefined") ? heightmap.getHeightFromCoords(worldX, worldZ) : 0;
         if (!v.isFlyingVehicle) vBaseH = Math.max(vBaseH, vGroundH);
 
-        const vName = (v.name || "").toLowerCase();
-        const isArmor = vName.includes("tnk") || vName.includes("tank") || vName.includes("apc") || vName.includes("bmp") || vName.includes("btr");
-        const isHeli = vName.includes("heli") || vName.includes("uh60") || vName.includes("mi8") || vName.includes("ah1z");
+        const prof = (typeof getVehicleAcousticProfile === "function")
+            ? getVehicleAcousticProfile(v)
+            : { opticOffset: 1.7 };
 
-        let opticOffset = isArmor ? 2.4 : (isHeli ? 1.8 : 1.7);
+        let opticOffset = prof.opticOffset;
         eyeY = vBaseH + opticOffset;
 
         const vRot = typeof v.getRotation === "function" ? v.getRotation() : (v.rotation || 0);
         const pRot = typeof p.getRotation === "function" ? p.getRotation() : (p.rotation || 0);
-        rot = (p.vehicleSlot === 0 || p.rotation == null || p.rotation === 0) ? vRot : pRot;
+        rot = (p.vehicleSlot === 0 || p.rotation == null || isNaN(p.rotation) || (typeof gunnerRotationSupported !== "undefined" && !gunnerRotationSupported)) ? vRot : pRot;
     }
 
     return { x: worldX, y: eyeY, z: worldZ, rot: rot };
@@ -2059,16 +2105,16 @@ function getPlayerEyePos(p) {
 
 function getVehicleEyePos(v) {
     if (!v) return { x: 0, y: 2.0, z: 0, rot: 0 };
-    const vx = typeof v.getX === "function" ? v.getX() : (v.X || 0);
-    const vz = typeof v.getZ === "function" ? v.getZ() : (v.Z || 0);
+    const vx = (typeof v._smoothX === "number" && !isNaN(v._smoothX)) ? v._smoothX : (typeof v.getX === "function" ? v.getX() : (v.X || 0));
+    const vz = (typeof v._smoothZ === "number" && !isNaN(v._smoothZ)) ? v._smoothZ : (typeof v.getZ === "function" ? v.getZ() : (v.Z || 0));
     let vy = (typeof v._smoothY === "number" && !isNaN(v._smoothY)) ? v._smoothY : ((typeof v.getY === "function") ? v.getY() : (v.Y || 0));
     let groundH = (typeof heightmap !== "undefined") ? heightmap.getHeightFromCoords(vx, vz) : 0;
     if (!v.isFlyingVehicle) vy = Math.max(vy, groundH);
 
-    const vName = (v.name || "").toLowerCase();
-    const isArmor = vName.includes("tnk") || vName.includes("tank") || vName.includes("apc") || vName.includes("bmp") || vName.includes("btr");
-    const isHeli = vName.includes("heli") || vName.includes("uh60") || vName.includes("mi8") || vName.includes("ah1z");
-    const opticOffset = isArmor ? 2.4 : (isHeli ? 1.8 : 1.7);
+    const prof = (typeof getVehicleAcousticProfile === "function")
+        ? getVehicleAcousticProfile(v)
+        : { opticOffset: 1.7 };
+    const opticOffset = prof.opticOffset;
 
     const rot = typeof v.getRotation === "function" ? v.getRotation() : (v.rotation || 0);
     return { x: vx, y: vy + opticOffset, z: vz, rot: rot };
@@ -2084,11 +2130,15 @@ function getVehicleEyePos(v) {
 
         const selPlayer = (typeof SelectedPlayer !== "undefined") ? SelectedPlayer : -1;
         const selVehicle = (typeof SelectedVehicle !== "undefined") ? SelectedVehicle : -1;
+        const fpvState = (typeof renderer3d !== "undefined" && typeof renderer3d.getActive1PVState === "function")
+            ? renderer3d.getActive1PVState()
+            : null;
 
         if (selPlayer != -1 && typeof AllPlayers !== "undefined") {
             const p = AllPlayers[selPlayer];
             if (p && !p.isJoining && p.isAlive && p.X != null && !isNaN(p.X)) {
                 const eye = getPlayerEyePos(p);
+                const is1PVUnit = !!(fpvState && fpvState.active && p.id === fpvState.fpvPlayerId);
 
                 const coneRange = (typeof options_VisionConeRange !== "undefined") ? options_VisionConeRange : 150;
                 const coneAngle = (typeof options_VisionConeAngle !== "undefined") ? options_VisionConeAngle : 94.9;
@@ -2097,19 +2147,19 @@ function getVehicleEyePos(v) {
 
                 // 1. 3D Volumetric Vision Cone (Radiates from eye level with 63.03° vertical FOV)
                 // Controlled specifically by "Cone with LOS" (options_VisionConeRespectsLOS)
-                if (showVisionCone) {
+                if (showVisionCone && !is1PVUnit) {
                     this.add3DVisionCone(eye.x, eye.y, eye.z, eye.rot, coneRange, coneAngle, coneRespectsLOS);
                 }
 
                 // 2. 3D Threat Lasers (Forward Gaze LOS + Enemy Targeting Beams from eye level)
                 // Controlled specifically by "Terrain/Building LOS" (options_ConeRespectsTerrain)
                 if (showThreatLasers) {
-                    this.add3DThreatLasers(p, eye.x, eye.y, eye.z, eye.rot, coneRange, coneAngle, respectTerrainLOS);
+                    this.add3DThreatLasers(p, eye.x, eye.y, eye.z, eye.rot, coneRange, coneAngle, respectTerrainLOS, is1PVUnit);
                 }
 
                 // 3. 3D 4km Laser (Head/Eye Level 4000m projection)
                 if (show4KmLaser) {
-                    this.add3D4KmLaser(eye.x, eye.y, eye.z, eye.rot);
+                    this.add3D4KmLaser(eye.x, eye.y, eye.z, eye.rot, is1PVUnit);
                 }
 
                 // 4. 3D BVR Laser (Head/Eye Level BVR corridor laser)
@@ -2121,20 +2171,21 @@ function getVehicleEyePos(v) {
             const v = AllVehicles[selVehicle];
             if (v && v.X != null && !isNaN(v.X)) {
                 const eye = getVehicleEyePos(v);
+                const is1PVVeh = !!(fpvState && fpvState.active && v.id === fpvState.fpvVehicleId);
 
                 const coneRange = (typeof options_VisionConeRange !== "undefined") ? options_VisionConeRange : 150;
                 const coneAngle = (typeof options_VisionConeAngle !== "undefined") ? options_VisionConeAngle : 94.9;
                 const coneRespectsLOS = (typeof options_VisionConeRespectsLOS !== "undefined") ? options_VisionConeRespectsLOS : true;
                 const respectTerrainLOS = (typeof options_ConeRespectsTerrain !== "undefined") ? options_ConeRespectsTerrain : true;
 
-                if (showVisionCone) {
+                if (showVisionCone && !is1PVVeh) {
                     this.add3DVisionCone(eye.x, eye.y, eye.z, eye.rot, coneRange, coneAngle, coneRespectsLOS);
                 }
                 if (showThreatLasers) {
-                    this.add3DThreatLasers(v, eye.x, eye.y, eye.z, eye.rot, coneRange, coneAngle, respectTerrainLOS);
+                    this.add3DThreatLasers(v, eye.x, eye.y, eye.z, eye.rot, coneRange, coneAngle, respectTerrainLOS, is1PVVeh);
                 }
                 if (show4KmLaser) {
-                    this.add3D4KmLaser(eye.x, eye.y, eye.z, eye.rot);
+                    this.add3D4KmLaser(eye.x, eye.y, eye.z, eye.rot, is1PVVeh);
                 }
                 if (showBVRLaser) {
                     this.add3DBVRLaser(v, eye.x, eye.y, eye.z, eye.rot, coneRange);

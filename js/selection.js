@@ -34,6 +34,7 @@ var SelectedSquadTeam = SELECTED_NOTHING
 var SelectedSquadNumber = SELECTED_NOTHING
 
 function selection_SelectObject(obj) {
+	if (obj && obj._isHudAction) return;
 	if (obj == null) {
 		if (typeof buildingHeightmap !== "undefined") buildingHeightmap.setSelectedObb(null);
 		selection_SelectPlayer(SELECTED_NOTHING);
@@ -64,6 +65,7 @@ function selection_SelectObject(obj) {
 }
 
 function selection_selectObjectSquad(object) {
+	if (object && object._isHudAction) return;
 	if (object != null)
 	{
 		if (object instanceof PlayerObject)
@@ -157,6 +159,9 @@ function selection_SelectVehicle(i)
 		SelectedVehicle = SELECTED_NOTHING;
 		selection_UpdateInformationBox();
 		if (typeof analyserTimeline !== "undefined") analyserTimeline.draw();
+		if (SelectedPlayer == SELECTED_NOTHING && typeof options_FirstPersonView !== "undefined" && options_FirstPersonView && typeof toggleFirstPersonView === "function") {
+			toggleFirstPersonView(false);
+		}
 		return;
 	}
 
@@ -240,6 +245,68 @@ function selection_DeselectCurrent()
 {
 	if (typeof buildingHeightmap !== "undefined") buildingHeightmap.setSelectedObb(null);
 	selection_SelectPlayer(SELECTED_NOTHING);
+	if (typeof options_FirstPersonView !== "undefined" && options_FirstPersonView && typeof toggleFirstPersonView === "function") {
+		toggleFirstPersonView(false);
+	}
+}
+
+function getSortedAliveVehiclePassengers(vehicleId)
+{
+	if (vehicleId == null || vehicleId == SELECTED_NOTHING || typeof AllVehicles === "undefined" || typeof AllPlayers === "undefined") {
+		return [];
+	}
+	const v = AllVehicles[vehicleId];
+	if (!v || !v.Passengers || typeof v.Passengers.forEach !== "function") {
+		return [];
+	}
+	const crew = [];
+	v.Passengers.forEach((pid) => {
+		const cp = AllPlayers[pid];
+		if (cp && !cp.isJoining && cp.isAlive) {
+			crew.push(cp);
+		}
+	});
+	crew.sort((a, b) => {
+		const sa = (a.vehicleSlot != null) ? Number(a.vehicleSlot) : 99;
+		const sb = (b.vehicleSlot != null) ? Number(b.vehicleSlot) : 99;
+		if (sa !== sb) return sa - sb;
+		return Number(a.id) - Number(b.id);
+	});
+	return crew;
+}
+
+function cycleSelectedVehiclePassenger(dir)
+{
+	let vehId = SELECTED_NOTHING;
+	if (SelectedVehicle != SELECTED_NOTHING && typeof AllVehicles !== "undefined" && AllVehicles[SelectedVehicle]) {
+		vehId = SelectedVehicle;
+	} else if (SelectedPlayer != SELECTED_NOTHING && typeof AllPlayers !== "undefined" && AllPlayers[SelectedPlayer]) {
+		const sp = AllPlayers[SelectedPlayer];
+		if (sp.vehicleid != null && sp.vehicleid >= 0 && typeof AllVehicles !== "undefined" && AllVehicles[sp.vehicleid]) {
+			vehId = sp.vehicleid;
+		}
+	}
+	if (vehId == SELECTED_NOTHING) return false;
+
+	const crew = getSortedAliveVehiclePassengers(vehId);
+	if (crew.length === 0) return false;
+
+	const step = (dir != null && dir < 0) ? -1 : 1;
+	const curIdx = crew.findIndex((p) => p.id == SelectedPlayer);
+	let nextIdx = 0;
+	if (curIdx === -1) {
+		nextIdx = (step < 0) ? (crew.length - 1) : 0;
+	} else {
+		nextIdx = ((curIdx + step) % crew.length + crew.length) % crew.length;
+	}
+
+	selection_SelectPlayer(crew[nextIdx].id, false);
+	if (typeof renderer3d !== "undefined" && renderer3d && typeof options_FirstPersonView !== "undefined" && options_FirstPersonView) {
+		renderer3d.fpvYawOffset = 0;
+		renderer3d.fpvPitch = 0;
+	}
+	if (typeof requestUpdate === "function") requestUpdate();
+	return true;
 }
 
 function copyPlayerHash(e, hashStr, btnEl)
@@ -333,25 +400,31 @@ function selection_UpdateInformationBox()
 		spdDiv.style.cssText = "margin-top: 4px;";
 		div.appendChild(spdDiv);
 
+		let safeHash = "";
 		if (SelectedPlayer != SELECTED_NOTHING && typeof AllPlayers !== "undefined" && AllPlayers[SelectedPlayer]) {
 			const sp = AllPlayers[SelectedPlayer];
-			const safeHash = sp.hash ? escapeHtml(sp.hash) : "";
+			safeHash = sp.hash ? escapeHtml(sp.hash) : "";
 			const hashRow = document.createElement("div");
 			hashRow.style.cssText = "margin-top: 4px; font-size: 11px;";
 			hashRow.innerHTML = safeHash
 				? `Hash: <span id="playerSelectionHashVal" onclick="copyPlayerHash(event, '${safeHash}')" style="cursor: copy; user-select: all; font-family: monospace; font-size: 10.5px; color: #d8e6e4;" title="Click to copy hash">${safeHash}</span>`
 				: `Hash: <span style="font-family: monospace; font-size: 10.5px; color: #8fa3a1;" title="This demo file does not include player hashes">N/A</span>`;
 			div.appendChild(hashRow);
-
-			const vehActions = document.createElement("div");
-			vehActions.style.cssText = "margin-top: 5px; display: flex; gap: 4px;";
-			const isFollowing = (typeof options_CameraTracking !== "undefined" && options_CameraTracking);
-			vehActions.innerHTML = `
-				<button type="button" class="hud-mini-btn" onclick="event.stopPropagation(); if (typeof toggleCameraTracking === 'function') { toggleCameraTracking(); selection_UpdateInformationBox(); }" style="padding: 2px 6px; font-size: 10px; ${isFollowing ? 'background:#3a5250; color:#fff; border-color:#8fa3a1;' : ''}">${isFollowing ? 'Following [T]' : 'Follow [T]'}</button>
-				<button type="button" id="playerSelectionCopyHashBtn" class="hud-mini-btn" ${safeHash ? `onclick="copyPlayerHash(event, '${safeHash}', this)" title="Copy player hash"` : `disabled style="padding: 2px 6px; font-size: 10px; opacity: 0.45; cursor: not-allowed;" title="No hash in this demo"`} ${safeHash ? `style="padding: 2px 6px; font-size: 10px;"` : ""}>Copy Hash</button>
-			`;
-			div.appendChild(vehActions);
 		}
+
+		const vehActions = document.createElement("div");
+		vehActions.style.cssText = "margin-top: 5px; display: flex; flex-wrap: wrap; gap: 4px;";
+		const isFollowing = (typeof options_CameraTracking !== "undefined" && options_CameraTracking);
+		const is1PV = (typeof options_FirstPersonView !== "undefined" && options_FirstPersonView);
+		const copyHashBtnHtml = (SelectedPlayer != SELECTED_NOTHING && typeof AllPlayers !== "undefined" && AllPlayers[SelectedPlayer])
+			? `<button type="button" id="playerSelectionCopyHashBtn" class="hud-mini-btn" ${safeHash ? `onclick="copyPlayerHash(event, '${safeHash}', this)" title="Copy player hash"` : `disabled style="padding: 2px 6px; font-size: 10px; opacity: 0.45; cursor: not-allowed;" title="No hash in this demo"`} ${safeHash ? `style="padding: 2px 6px; font-size: 10px;"` : ""}>Copy Hash</button>`
+			: "";
+		vehActions.innerHTML = `
+			<button type="button" class="hud-mini-btn${isFollowing ? ' active' : ''}" onclick="event.stopPropagation(); if (typeof toggleCameraTracking === 'function') { toggleCameraTracking(); selection_UpdateInformationBox(); }" style="padding: 2px 6px; font-size: 10px; ${isFollowing ? 'background:#3a5250; color:#fff; border-color:#8fa3a1;' : ''}">${isFollowing ? 'Following [T]' : 'Follow [T]'}</button>
+			<button type="button" class="hud-mini-btn${is1PV ? ' active' : ''}" onclick="event.stopPropagation(); if (typeof toggleFirstPersonView === 'function') { toggleFirstPersonView(); selection_UpdateInformationBox(); }" style="padding: 2px 6px; font-size: 10px; ${is1PV ? 'background:#3a5250; color:#fff; border-color:#8fa3a1;' : ''}" title="Toggle 3D First-Person View [F]">${is1PV ? '1PV Active [F]' : '1PV [F]'}</button>
+			${copyHashBtnHtml}
+		`;
+		div.appendChild(vehActions);
 
 		updateSelectionSpeedAcousticLabel();
 
@@ -446,10 +519,12 @@ function selection_UpdateInformationBox()
 		div.appendChild(spdDiv);
 
 		const actionsDiv = document.createElement("div");
-		actionsDiv.style.cssText = "margin-top: 5px; display: flex; gap: 4px;";
+		actionsDiv.style.cssText = "margin-top: 5px; display: flex; flex-wrap: wrap; gap: 4px;";
 		const isFollowing = (typeof options_CameraTracking !== "undefined" && options_CameraTracking);
+		const is1PV = (typeof options_FirstPersonView !== "undefined" && options_FirstPersonView);
 		actionsDiv.innerHTML = `
-			<button type="button" class="hud-mini-btn" onclick="event.stopPropagation(); if (typeof toggleCameraTracking === 'function') { toggleCameraTracking(); selection_UpdateInformationBox(); }" style="padding: 2px 6px; font-size: 10px; ${isFollowing ? 'background:#3a5250; color:#fff; border-color:#8fa3a1;' : ''}">${isFollowing ? 'Following [T]' : 'Follow [T]'}</button>
+			<button type="button" class="hud-mini-btn${isFollowing ? ' active' : ''}" onclick="event.stopPropagation(); if (typeof toggleCameraTracking === 'function') { toggleCameraTracking(); selection_UpdateInformationBox(); }" style="padding: 2px 6px; font-size: 10px; ${isFollowing ? 'background:#3a5250; color:#fff; border-color:#8fa3a1;' : ''}">${isFollowing ? 'Following [T]' : 'Follow [T]'}</button>
+			<button type="button" class="hud-mini-btn${is1PV ? ' active' : ''}" onclick="event.stopPropagation(); if (typeof toggleFirstPersonView === 'function') { toggleFirstPersonView(); selection_UpdateInformationBox(); }" style="padding: 2px 6px; font-size: 10px; ${is1PV ? 'background:#3a5250; color:#fff; border-color:#8fa3a1;' : ''}" title="Toggle 3D First-Person View [F]">${is1PV ? '1PV Active [F]' : '1PV [F]'}</button>
 			<button type="button" id="playerSelectionCopyHashBtn" class="hud-mini-btn" ${safeHash ? `onclick="copyPlayerHash(event, '${safeHash}', this)" style="padding: 2px 6px; font-size: 10px;" title="Copy player hash"` : `disabled style="padding: 2px 6px; font-size: 10px; opacity: 0.45; cursor: not-allowed;" title="No hash in this demo"`}>Copy Hash</button>
 		`;
 		div.appendChild(actionsDiv);
@@ -515,12 +590,12 @@ function updateSelectionSpeedAcousticLabel() {
 				}
 			});
 		}
-		const vName = (veh.name || "").toLowerCase();
-		const isHeavy = vName.includes("tnk") || vName.includes("tank") || vName.includes("apc") || vName.includes("bmp") || vName.includes("btr");
-		const isHeli = vName.includes("heli") || vName.includes("uh60") || vName.includes("mi8") || vName.includes("ah1z");
-		let acousticState = "Engine OFF";
-		if (hasDriver) {
-			let engineRadiusM = speedKmh >= 2.0 ? (isHeli ? 800 : isHeavy ? 450 : 250) : (isHeli ? 300 : isHeavy ? 100 : 60);
+		const prof = (typeof getVehicleAcousticProfile === "function")
+			? getVehicleAcousticProfile(veh)
+			: { hasEngine: true, moveRadius: 250, idleRadius: 60 };
+		let acousticState = prof.hasEngine ? "Engine OFF" : "Stationary (No Engine)";
+		if (hasDriver && prof.hasEngine) {
+			let engineRadiusM = speedKmh >= 2.0 ? prof.moveRadius : prof.idleRadius;
 			acousticState = speedKmh >= 2.0 ? `Driving (${engineRadiusM}m sound)` : `Engine Idle (${engineRadiusM}m sound)`;
 		}
 		container.innerHTML = `Speed: ${speedKmh.toFixed(1)} km/h<br>Acoustic: ${acousticState}`;
@@ -531,4 +606,66 @@ function updateSelectionSpeedAcousticLabel() {
 		const st = (typeof getPlayerStance === "function") ? getPlayerStance(p, speedKmh) : { text: "Stationary (0m)" };
 		container.innerHTML = `Speed: ${speedKmh.toFixed(1)} km/h<br>Acoustic: ${st.text}`;
 	}
+}
+
+function kitNameToReadable(kitName) {
+	if (!kitName || typeof kitName !== "string") return "";
+	const raw = kitName.trim();
+	if (!raw) return "";
+	const parts = raw.split("_").filter(Boolean);
+	if (parts.length === 0) return raw;
+
+	const roleMap = {
+		officer: "Officer",
+		rifleman: "Rifleman",
+		riflemanat: "Rifleman AT",
+		riflemanap: "Rifleman AP",
+		assault: "Assault",
+		automaticrifleman: "Automatic Rifleman",
+		ar: "Automatic Rifleman",
+		support: "Support",
+		mg: "Machine Gunner",
+		medic: "Medic",
+		engineer: "Combat Engineer",
+		specialist: "Specialist",
+		marksman: "Marksman",
+		dmr: "Marksman",
+		sniper: "Sniper",
+		spotter: "Spotter",
+		breacher: "Breacher",
+		grenadier: "Grenadier",
+		lat: "Light Anti-Tank",
+		hat: "Heavy Anti-Tank",
+		aa: "Anti-Air",
+		crewman: "Crewman",
+		pilot: "Pilot",
+		commander: "Commander",
+		sapper: "Sapper",
+		civilian: "Civilian",
+		collaborator: "Collaborator",
+		insurgent: "Insurgent",
+		cellleader: "Cell Leader",
+		specops: "Spec Ops",
+		scout: "Scout",
+		rif: "Rifleman",
+		smg: "SMG",
+		shotgun: "Shotgun",
+		pistol: "Pistol",
+		grenade: "Grenadier",
+		m79: "M79 Grenadier",
+		claymore: "Claymore",
+		knife: "Knife",
+		scorpion: "Scorpion"
+	};
+
+	if (parts[0].toLowerCase() === "gungame" && parts.length >= 3) {
+		const roleKey = parts[2].toLowerCase();
+		const roleLabel = roleMap[roleKey] || (roleKey.charAt(0).toUpperCase() + roleKey.slice(1));
+		return "Gungame " + roleLabel;
+	}
+
+	const faction = parts[0].toUpperCase();
+	const roleKey = (parts[1] || "").toLowerCase();
+	const roleLabel = roleMap[roleKey] || (roleKey ? (roleKey.charAt(0).toUpperCase() + roleKey.slice(1)) : "");
+	return roleLabel ? (faction + " " + roleLabel) : faction;
 }

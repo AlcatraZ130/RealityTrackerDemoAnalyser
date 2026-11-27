@@ -93,6 +93,11 @@ function vehicleTable_Update(i)
 function vehicleTable_AddPlayer(table, vehicle, player, rownum)
 {
 	var row = table.insertRow(rownum);
+	row.setAttribute("onclick", "event.stopPropagation(); selection_SelectPlayer(" + player.id + ", false);");
+	row.style.cursor = "pointer";
+	if (typeof SelectedPlayer !== "undefined" && SelectedPlayer == player.id) {
+		row.classList.add("vehicleTable-active-crew");
+	}
 
 	var seatName = player.vehicleSeatName || "";
 	// See if we can remove vehiclename from seat name

@@ -48,12 +48,8 @@ function interpolateAngle(Start, End)
 	}
 	if (isNaN(Start)) return End;
 	if (isNaN(End)) return Start;
-	if (End - Start > 180)
-		End -= 360;
-	else if (Start - End > 180)
-		Start -= 360;
-
-	return Start * (1 - interpolation_CurrentAmount) + End * interpolation_CurrentAmount;
+	const diff = (((End - Start) % 360) + 540) % 360 - 180;
+	return Start + diff * interpolation_CurrentAmount;
 }
 
 // Ease-out exponential interpolation for player camera rotation.
@@ -65,17 +61,16 @@ function interpolateAngleFast(Start, End)
 	if (typeof options_Interpolation !== "undefined" && !options_Interpolation) {
 		return isNaN(End) ? Start : End;
 	}
-	if (End - Start > 180)
-		End -= 360;
-	else if (Start - End > 180)
-		Start -= 360;
+	if (isNaN(Start)) return End;
+	if (isNaN(End)) return Start;
+	const diff = (((End - Start) % 360) + 540) % 360 - 180;
 
 	// ease-out exponential: f(t) = 1 - 2^(-10t)
 	// At t=0.1 → 50%, t=0.2 → 75%, t=0.3 → 87%, t=0.5 → 97%
 	const t = interpolation_CurrentAmount;
 	const tEased = t >= 1.0 ? 1.0 : 1.0 - Math.pow(2, -10 * t);
 
-	return Start * (1 - tEased) + End * tEased;
+	return Start + diff * tEased;
 }
 
 //for UI purposes only
@@ -327,11 +322,11 @@ const orderEnums = [null,
 	null,
 	null,
 	[0, "#cbc337"], // move
-	[33, "#ff9900"], // target
-	[66, "#ca32f2"], // defend
-	[99, "#ca32f2"], // build
-	[132, "#ff9900"], // destroy
-	[165, "#ff9900"]  // observe
+	[32, "#ff9900"], // target
+	[64, "#ca32f2"], // defend
+	[96, "#ca32f2"], // build
+	[128, "#ff9900"], // destroy
+	[160, "#ff9900"]  // observe
 ]
 
 
@@ -355,7 +350,7 @@ function drawOrderIcon(order)
 	const x = XtoCanvas(order.X)
 	const y = YtoCanvas(order.Z)
 	
-	Context.drawImage(icons.squadorders, iconX, 12, 20, 32, x - 16, y - 14, 20, 32) 
+	Context.drawImage(icons.squadorders, iconX + 6, 12, 20, 20, x - 10, y - 10, 20, 20) 
 
 	
 	Context.fillStyle = (order.team == 1) ? Style_RedTeam : Style_BlueTeam

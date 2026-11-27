@@ -37,8 +37,8 @@ function playerRow_Create(id)
 	row.classList.add("player-row")
 	row.onclick = function ()
 	{
-		// If player is selected again or is in a vehicle that has been selected, deselect. 
-		if (SelectedPlayer == id || SelectedVehicle == AllPlayers[id].vehicleid)
+		// Deselect if clicking the already-selected player, or clicking a crew member when only the vehicle is selected.
+		if (SelectedPlayer == id || (SelectedPlayer == SELECTED_NOTHING && SelectedVehicle != SELECTED_NOTHING && SelectedVehicle == AllPlayers[id].vehicleid))
 			selection_SelectPlayer(SELECTED_NOTHING)
 		else
 			selection_SelectPlayer(id,true)

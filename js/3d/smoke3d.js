@@ -21,10 +21,16 @@ class Smoke3dRenderer extends Initializable {
     tex = null;
     texReady = false;
 
-    maxPuffs = 2048;
+    maxPuffs = 4096;
     // Per vertex: pos(3) + uv(2) + localUv(2) + color(4) = 11 floats
     vertData = null;
     puffList = [];
+    vehParticles = [];
+    _lastVehMs = 0;
+    _lastVehTick = -1;
+    _terrainSampleCanvas = null;
+    _terrainSampleData = null;
+    _terrainSampleSrc = null;
 
     constructor() {
         super();
@@ -86,12 +92,14 @@ class Smoke3dRenderer extends Initializable {
             uniform vec3 uFogOrigin;
             uniform vec4 uFogRange;
             uniform float uFogAlphaFloor;
+            uniform float u_camNear;
 
             out vec4 fragColor;
 
             float linearizeSceneDepth(float d) {
                 float zNdc = d * 2.0 - 1.0;
-                return (2.0 * 0.25 * 20000.0) / (20000.0 + 0.25 - zNdc * (20000.0 - 0.25));
+                float zNear = max(0.01, u_camNear);
+                return (2.0 * zNear * 20000.0) / (20000.0 + zNear - zNdc * (20000.0 - zNear));
             }
 
             void main(void) {
@@ -102,7 +110,7 @@ class Smoke3dRenderer extends Initializable {
                     if (gl_FragCoord.z >= sceneD) discard;
                     float linScene = linearizeSceneDepth(sceneD);
                     float linFrag = linearizeSceneDepth(gl_FragCoord.z);
-                    softFade = clamp((linScene - linFrag) / 1.5, 0.0, 1.0);
+                    softFade = clamp((linScene - linFrag) / 0.55, 0.0, 1.0);
                     if (softFade <= 0.005) discard;
                 }
 
@@ -159,6 +167,7 @@ class Smoke3dRenderer extends Initializable {
         this.uFogOrigin = gl.getUniformLocation(prog, "uFogOrigin");
         this.uFogRange = gl.getUniformLocation(prog, "uFogRange");
         this.uFogAlphaFloor = gl.getUniformLocation(prog, "uFogAlphaFloor");
+        this.u_camNear = gl.getUniformLocation(prog, "u_camNear");
 
         // Pre-build static quad index buffer for maxPuffs
         const indices = new Uint16Array(this.maxPuffs * 6);
@@ -240,12 +249,317 @@ class Smoke3dRenderer extends Initializable {
         return fadeIn * fadeOut;
     }
 
+    // Sample real terrain color / water state under (worldX, worldZ) in O(1) using a cached 256x256 copy of TerrainImage
+    _sampleTerrainSurface(worldX, worldZ, groundY) {
+        if (typeof water3dRenderer !== "undefined" && water3dRenderer && water3dRenderer._hasActiveWater) {
+            const sea = water3dRenderer._seaLevel || 0.0;
+            if (groundY < sea + 0.18) {
+                return { r: 0.90, g: 0.94, b: 0.98, density: 0.92, isWater: true, surfaceY: sea };
+            }
+        }
+        const img = (typeof TerrainImage !== "undefined" && TerrainImage && TerrainImage.complete && TerrainImage.naturalWidth > 0)
+            ? TerrainImage
+            : ((typeof MapImage !== "undefined" && MapImage && MapImage.complete && MapImage.naturalWidth > 0) ? MapImage : null);
+        if (img && this._terrainSampleSrc !== img) {
+            try {
+                const c = this._terrainSampleCanvas || document.createElement("canvas");
+                c.width = 256;
+                c.height = 256;
+                const ctx = c.getContext("2d", { willReadFrequently: true });
+                ctx.drawImage(img, 0, 0, 256, 256);
+                this._terrainSampleData = ctx.getImageData(0, 0, 256, 256).data;
+                this._terrainSampleCanvas = c;
+                this._terrainSampleSrc = img;
+            } catch (e) {
+                this._terrainSampleData = null;
+                this._terrainSampleSrc = img;
+            }
+        }
+        if (this._terrainSampleData && typeof heightmap !== "undefined" && heightmap && heightmap.size > 0) {
+            const half = heightmap.size * 0.5;
+            const u = Math.max(0.0, Math.min(0.999, (worldX + half) / heightmap.size));
+            const v = Math.max(0.0, Math.min(0.999, (half - worldZ) / heightmap.size));
+            const px = (u * 255) | 0;
+            const py = (v * 255) | 0;
+            const idx = (py * 256 + px) * 4;
+            const d = this._terrainSampleData;
+            const tr = d[idx] / 255.0;
+            const tg = d[idx + 1] / 255.0;
+            const tb = d[idx + 2] / 255.0;
+            const maxC = Math.max(tr, tg, tb);
+            const minC = Math.min(tr, tg, tb);
+            const sat = maxC - minC;
+            const luma = tr * 0.299 + tg * 0.587 + tb * 0.114;
+
+            // Snow (bright low-saturation)
+            if (luma > 0.72 && sat < 0.12) {
+                return { r: 0.92, g: 0.94, b: 0.97, density: 0.88, isWater: false, surfaceY: groundY };
+            }
+            // Tarmac / Concrete / Helipad (dark neutral grey) -> almost zero dust!
+            if (sat < 0.065 && luma < 0.56) {
+                return { r: 0.66, g: 0.65, b: 0.63, density: 0.10, isWater: false, isConcrete: true, surfaceY: groundY };
+            }
+            // Lush grass -> rich natural earthy soil dust (warm brown-tan, never green)
+            if (tg > tr + 0.03 && tg > tb + 0.03) {
+                return {
+                    r: Math.min(0.82, tr * 0.52 + 0.44),
+                    g: Math.min(0.72, tg * 0.44 + 0.36),
+                    b: Math.min(0.56, tb * 0.38 + 0.24),
+                    density: 0.92,
+                    isWater: false,
+                    isConcrete: false,
+                    surfaceY: groundY
+                };
+            }
+            // Sand / Desert / Dirt -> rich warm dust matching map palette
+            return {
+                r: Math.min(0.92, tr * 0.78 + 0.24),
+                g: Math.min(0.84, tg * 0.75 + 0.21),
+                b: Math.min(0.72, tb * 0.70 + 0.16),
+                density: 1.0,
+                isWater: false,
+                isConcrete: false,
+                surfaceY: groundY
+            };
+        }
+        return { r: 0.78, g: 0.72, b: 0.62, density: 0.80, isWater: false, surfaceY: groundY };
+    }
+
+    _classifyGroundVehicleDust(v, mesh) {
+        const n = ((v.name || v.templateName || "") + " " + (mesh && mesh.modelKey ? mesh.modelKey : "")).toLowerCase();
+        if (/_shp_|boat|ship|rhib|pbr|lcm|lci|lsm|deployable|fob_|rallypoint|supply_crate|ammo_drop|fixed_|stationary|bipod|tripod|mortar/.test(n)) {
+            return null;
+        }
+        const w = (mesh && mesh.width > 0.5) ? mesh.width : 2.6;
+        const len = (mesh && mesh.length > 0.5) ? mesh.length : 5.2;
+        if (/_tnk_|_ifv_|tank|bmp|bradley|warrior|cv90|marder|shilka|tunguska|mtlb|m113|aavp|fv432|zbd|bmd|panther|tiger|sherman|t34|pz4|stug|churchill|cromwell/.test(n)) {
+            return {
+                // Tank / Tracked IFV: long, dense, sky-spottable dust plume grounded right at the tracks
+                maxSize: Math.min(Math.max(3.2, w * 1.12), 4.6),
+                baseSize: Math.min(Math.max(1.35, w * 0.48), 2.1),
+                ttlMin: 4.0, ttlMax: 5.8,
+                emitRate: 22.0,
+                alphaScale: 0.90,
+                riseSpeed: 0.46,
+                rearOffset: len * 0.40,
+                trackSpreadZ: len * 0.24,
+                trackHalfW: w * 0.40
+            };
+        }
+        if (/_apc_|_trk_|truck|ural|kamaz|stryker|btr|lav|mrap|cougar|mastiff|brdm|fuchs|boxer|fennek|tpz|logi/.test(n)) {
+            return {
+                maxSize: Math.min(Math.max(2.3, w * 0.96), 3.3),
+                baseSize: Math.min(Math.max(1.0, w * 0.40), 1.5),
+                ttlMin: 2.5, ttlMax: 3.7,
+                emitRate: 15.0,
+                alphaScale: 0.80,
+                riseSpeed: 0.36,
+                rearOffset: len * 0.38,
+                trackSpreadZ: len * 0.20,
+                trackHalfW: w * 0.38
+            };
+        }
+        return {
+            maxSize: Math.min(Math.max(1.5, w * 0.82), 2.15),
+            baseSize: Math.min(Math.max(0.72, w * 0.34), 1.05),
+            ttlMin: 1.45, ttlMax: 2.25,
+            emitRate: 11.0,
+            alphaScale: 0.70,
+            riseSpeed: 0.28,
+            rearOffset: len * 0.36,
+            trackSpreadZ: len * 0.16,
+            trackHalfW: w * 0.36
+        };
+    }
+
+    _updateAndEmitVehicleParticles(puffs) {
+        if (typeof AllVehicles === "undefined" || !AllVehicles) return;
+        const nowMs = (typeof performance !== "undefined" && typeof performance.now === "function") ? performance.now() : Date.now();
+        const rawDt = this._lastVehMs ? ((nowMs - this._lastVehMs) / 1000.0) : 0.016;
+        this._lastVehMs = nowMs;
+        const isPlaying = (typeof IsPlaying !== "undefined") ? !!IsPlaying : true;
+        const curTick = (typeof Tick_Current !== "undefined") ? Tick_Current : 0;
+
+        // Clear trail particles on large timeline jump/seek
+        if (this._lastVehTick >= 0 && Math.abs(curTick - this._lastVehTick) > 15) {
+            this.vehParticles.length = 0;
+        }
+        this._lastVehTick = curTick;
+
+        const dt = isPlaying ? Math.min(0.20, Math.max(0.0, rawDt)) : 0.0;
+        const parts = this.vehParticles;
+
+        if (dt > 0.0) {
+            const hasHm = (typeof heightmap !== "undefined" && heightmap && heightmap.initialized);
+            const entR = (typeof entities3dRenderer !== "undefined") ? entities3dRenderer : null;
+
+            for (const vId in AllVehicles) {
+                const v = AllVehicles[vId];
+                if (!v || v.isClimbingVehicle) continue;
+
+                const vx = (v._smoothX != null && !isNaN(v._smoothX)) ? v._smoothX : ((typeof v.getX === "function") ? v.getX() : v.X);
+                const vy = (v._smoothY != null && !isNaN(v._smoothY)) ? v._smoothY : ((typeof v.getY === "function") ? v.getY() : (v.Y || 0));
+                const vz = (v._smoothZ != null && !isNaN(v._smoothZ)) ? v._smoothZ : ((typeof v.getZ === "function") ? v.getZ() : v.Z);
+                if (vx == null || isNaN(vx) || vz == null || isNaN(vz)) continue;
+
+                const meshKey = entR ? entR.getVehicleMeshKey(v) : null;
+                const mesh = (entR && meshKey) ? entR.gpuMeshCache[meshKey] : null;
+                const groundY = hasHm ? heightmap.getHeightFromCoords(vx, vz) : 0.0;
+                const speed = (v._animSpeed != null && isFinite(v._animSpeed)) ? v._animSpeed : 0.0;
+                const vNameLow = ((v.name || v.templateName || "") + " " + (meshKey || "")).toLowerCase();
+
+                if (v.isFlyingVehicle) {
+                    // Helicopter Rotor Downwash (PR ade_helidraft: EmitScaleFactorFromAltitude 30/5)
+                    const isJet = vNameLow.includes("_jet_") || vNameLow.includes("_air_");
+                    if (isJet) continue;
+                    const surf = this._sampleTerrainSurface(vx, vz, groundY);
+                    const agl = Math.max(0.0, vy - surf.surfaceY);
+                    const hasCrew = !!(v.Passengers && (v.Passengers.size > 0 || v.Passengers.length > 0));
+                    const rpm = (v._rotorRpm != null) ? v._rotorRpm : (agl > 0.5 || hasCrew ? 1.0 : 0.0);
+                    if (agl < 28.0 && rpm > 0.25 && !surf.isConcrete && surf.density > 0.15) {
+                        const altFactor = Math.pow(Math.max(0.0, Math.min(1.0, 1.0 - agl / 28.0)), 0.65);
+                        const spdFactor = Math.max(0.28, Math.min(1.0, 1.0 - speed / 28.0));
+                        const intensity = altFactor * spdFactor * rpm * surf.density;
+                        const span = mesh ? Math.max(mesh.width || 11.0, mesh.length || 13.0) : 14.0;
+                        // Wide, billowing radial donut reaching ~half the helicopter's height while leaving the center readable
+                        const ringR = Math.max(5.5, Math.min(13.5, span * 0.56)) * (0.78 + 0.34 * (1.0 - altFactor));
+                        const emitRate = (30.0 + 36.0 * intensity);
+                        if (v._washEmitAcc == null) v._washEmitAcc = 2.0;
+                        v._washEmitAcc += emitRate * dt;
+                        while (v._washEmitAcc >= 1.0) {
+                            v._washEmitAcc -= 1.0;
+                            if (parts.length >= 2200) break;
+                            const ang = Math.random() * Math.PI * 2.0;
+                            const ca = Math.cos(ang), sa = Math.sin(ang);
+                            const r0 = ringR * (0.38 + Math.random() * 0.30);
+                            const outSpd = (5.2 + 6.4 * altFactor) * (0.82 + Math.random() * 0.36);
+                            const pSize0 = Math.min(4.2, Math.max(1.8, span * 0.20));
+                            const pSize1 = Math.min(8.2, pSize0 * (1.95 + 0.55 * altFactor));
+                            parts.push({
+                                x: vx + ca * r0,
+                                y: surf.surfaceY + 0.75 + Math.random() * 0.95,
+                                z: vz + sa * r0,
+                                vx: ca * outSpd,
+                                vy: 1.15 + Math.random() * 1.35 * altFactor,
+                                vz: sa * outSpd,
+                                drag: 1.35,
+                                age: 0.0,
+                                ttl: 1.45 + Math.random() * 0.95,
+                                s0: pSize0,
+                                s1: pSize1,
+                                r: surf.r, g: surf.g, b: surf.b,
+                                aMax: Math.min(0.88, 0.42 + 0.52 * intensity),
+                                rot: Math.random() * Math.PI * 2.0,
+                                rotSpd: (Math.random() - 0.5) * 1.4,
+                                frame: (Math.random() * 4) | 0
+                            });
+                        }
+                    }
+                } else {
+                    // Ground Vehicle Dust Trail (PR web_trackedsmoke / web_wheelbigsmoke: speed 2..15 m/s)
+                    if (speed < 2.0) continue;
+                    const agl = Math.max(0.0, vy - groundY);
+                    if (agl > 2.5) continue;
+                    const cfg = this._classifyGroundVehicleDust(v, mesh);
+                    if (!cfg) continue;
+                    const surf = this._sampleTerrainSurface(vx, vz, groundY);
+                    if (surf.density < 0.08) continue;
+
+                    const spdNorm = Math.max(0.0, Math.min(1.0, (speed - 2.0) / 13.0));
+                    const emitRate = cfg.emitRate * (0.45 + 0.55 * spdNorm);
+                    if (v._dustEmitAcc == null) v._dustEmitAcc = 2.0;
+                    v._dustEmitAcc += emitRate * dt;
+                    const rotRad = ((v._smoothRot != null ? v._smoothRot : (v.rotation || 0)) * Math.PI) / 180.0;
+                    const fwdX = Math.sin(rotRad), fwdZ = Math.cos(rotRad);
+                    const rightX = fwdZ, rightZ = -fwdX;
+
+                    while (v._dustEmitAcc >= 1.0) {
+                        v._dustEmitAcc -= 1.0;
+                        if (parts.length >= 2200) break;
+                        const side = (Math.random() < 0.5) ? -1.0 : 1.0;
+                        const lat = side * cfg.trackHalfW * (0.88 + Math.random() * 0.22);
+                        // Spawn directly along rear track/wheel contact patch so dust visibly kicks up from treads/tires
+                        const back = cfg.rearOffset + (Math.random() - 0.35) * (cfg.trackSpreadZ || 0.8);
+                        const px = vx - fwdX * back + rightX * lat;
+                        const pz = vz - fwdZ * back + rightZ * lat;
+                        const ttl = cfg.ttlMin + Math.random() * (cfg.ttlMax - cfg.ttlMin);
+                        const s0 = cfg.baseSize * (0.85 + Math.random() * 0.30);
+                        const s1 = cfg.maxSize * (0.85 + 0.15 * spdNorm);
+                        const riseSpd = (cfg.riseSpeed || 0.55) * (0.75 + Math.random() * 0.55);
+                        parts.push({
+                            x: px,
+                            y: surf.surfaceY + s0 * 0.16,
+                            z: pz,
+                            vx: -fwdX * (0.8 + spdNorm * 1.6) + rightX * side * (0.35 + Math.random() * 0.50),
+                            vy: riseSpd,
+                            vz: -fwdZ * (0.8 + spdNorm * 1.6) + rightZ * side * (0.35 + Math.random() * 0.50),
+                            drag: 1.15,
+                            groundY: surf.surfaceY,
+                            isGroundTrail: true,
+                            age: 0.0,
+                            ttl: ttl,
+                            s0: s0,
+                            s1: s1,
+                            r: surf.r, g: surf.g, b: surf.b,
+                            aMax: Math.min(0.92, cfg.alphaScale * (0.35 + 0.65 * spdNorm) * surf.density),
+                            rot: Math.random() * Math.PI * 2.0,
+                            rotSpd: (Math.random() - 0.5) * 0.8,
+                            frame: (Math.random() * 4) | 0
+                        });
+                    }
+                }
+            }
+
+            // Integrate living vehicle particles
+            for (let i = parts.length - 1; i >= 0; i--) {
+                const pt = parts[i];
+                pt.age += dt;
+                if (pt.age >= pt.ttl) {
+                    parts.splice(i, 1);
+                    continue;
+                }
+                const damp = Math.exp(-pt.drag * dt);
+                pt.vx *= damp;
+                pt.vz *= damp;
+                pt.vy *= Math.exp((pt.isGroundTrail ? -1.45 : -0.75) * dt);
+                pt.x += pt.vx * dt;
+                pt.y += pt.vy * dt;
+                pt.z += pt.vz * dt;
+                if (pt.isGroundTrail && pt.groundY != null) {
+                    const curSize = pt.s0 + (pt.s1 - pt.s0) * Math.pow(pt.age / pt.ttl, 0.55);
+                    // Keep the bottom of the dust puff hugging the ground so trails never float
+                    const maxCenterY = pt.groundY + curSize * 0.42;
+                    if (pt.y > maxCenterY) pt.y = maxCenterY;
+                }
+                pt.rot += pt.rotSpd * dt;
+            }
+        }
+
+        // Push living vehicle particles into shared puffList
+        for (let i = 0; i < parts.length && puffs.length < this.maxPuffs; i++) {
+            const pt = parts[i];
+            const ageN = pt.age / pt.ttl;
+            const fadeIn = Math.min(1.0, ageN / 0.15);
+            const fadeOut = Math.pow(Math.max(0.0, 1.0 - ageN), 1.35);
+            const alpha = pt.aMax * fadeIn * fadeOut;
+            if (alpha <= 0.015) continue;
+            const size = pt.s0 + (pt.s1 - pt.s0) * Math.pow(ageN, 0.55);
+            puffs.push({
+                x: pt.x, y: pt.y, z: -pt.z,
+                size: size,
+                rot: pt.rot,
+                frame: pt.frame,
+                r: pt.r, g: pt.g, b: pt.b, a: alpha,
+                distSq: 0
+            });
+        }
+    }
+
     draw(useFogArg, fogCfgArg, fogOriginArg) {
         if (!this.initialized || !this.program || !this.texReady) return;
         if (typeof syncBurningSmokeScreensFromAllProj === "function") {
             syncBurningSmokeScreensFromAllProj();
         }
-        if (typeof ns_activeSmokeScreens3D === "undefined" || ns_activeSmokeScreens3D.length === 0) return;
 
         const gl = renderer3d.gl;
         const viewMatrix = renderer3d.getCurrentViewMatrix();
@@ -259,6 +573,9 @@ class Smoke3dRenderer extends Initializable {
         const puffs = this.puffList;
         puffs.length = 0;
 
+        this._updateAndEmitVehicleParticles(puffs);
+
+        if (typeof ns_activeSmokeScreens3D !== "undefined" && ns_activeSmokeScreens3D.length > 0) {
         for (let i = ns_activeSmokeScreens3D.length - 1; i >= 0; i--) {
             const smk = ns_activeSmokeScreens3D[i];
             if (!smk) continue;
@@ -463,6 +780,7 @@ class Smoke3dRenderer extends Initializable {
                 }
             }
         }
+        }
 
         if (puffs.length === 0) return;
 
@@ -551,6 +869,10 @@ class Smoke3dRenderer extends Initializable {
         const hasSceneDepth = (renderer3d && renderer3d.sceneDepthTex) ? 1 : 0;
         gl.uniform1i(this.uHasSceneDepth, hasSceneDepth);
         gl.uniform2f(this.uViewportSize, renderer3d.canvas.width, renderer3d.canvas.height);
+        if (this.u_camNear !== null) {
+            const camNear = (renderer3d && typeof renderer3d.getCamNear === "function") ? renderer3d.getCamNear() : 0.25;
+            gl.uniform1f(this.u_camNear, camNear);
+        }
 
         gl.activeTexture(gl.TEXTURE0);
         gl.bindTexture(gl.TEXTURE_2D, this.tex);

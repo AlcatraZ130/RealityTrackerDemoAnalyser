@@ -108,11 +108,7 @@ function loadIconsAndDictionaries()
 	$.getJSON("data.json", json => {
 		//VEHICLES
 		vehicleData = json.vehicles;
-		for (var name in vehicleData)
-			{ // Apply default map icon for vehicles without icon.
-				if (vehicleData[name].MiniMapIcon == "")
-					vehicleData[name].MiniMapIcon = "mini_shp_light"
-			}
+		// Keep empty MiniMapIcon intact so VehicleObject.initializeGraphics can derive from MenuIcon / ACV / deployable rules
 		
 		//ATLAS
 		atlas = json.atlas;
@@ -175,7 +171,7 @@ const ProjectileTypeToImageName = {
 	1: "proj_mineat",	// PROJECTILE_TYPE_MINE_VICTIM_AT = 1
 	2: "proj_mineap",	// PROJECTILE_TYPE_MINE_VICTIM_AP = 2
 	3: "proj_mineatremote",	// PROJECTILE_TYPE_MINE_REMOTE_AT = 3
-	4: "proj_mineap",	// PROJECTILE_TYPE_MINE_REMOTE_AP = 4
+	4: "proj_mineapremote",	// PROJECTILE_TYPE_MINE_REMOTE_AP = 4
 	5: "proj_c4",	// PROJECTILE_TYPE_C4_SMALL = 5
 	6: "proj_c4satchel",	// PROJECTILE_TYPE_C4_LARGE = 6
 	32: "proj_lat",	// PROJECTILE_TYPE_AT_LIGHT = 32
@@ -195,16 +191,22 @@ var coloredIcons = {}
 function createColoredMapIcons()
 {
 	var imagesToColor = new Set()
-	for (var vehicle in vehicleData)
-		imagesToColor.add(vehicleData[vehicle].MiniMapIcon)
+	for (var vehicle in vehicleData) {
+		const mmIcon = vehicleData[vehicle].MiniMapIcon;
+		if (mmIcon && mmIcon !== "empty")
+			imagesToColor.add(mmIcon);
+	}
 	
 	for (var projectileType in ProjectileTypeToImageName)
 		if (ProjectileTypeToImageName[projectileType] != null)
 			imagesToColor.add(ProjectileTypeToImageName[projectileType]);
 
-	// Ensure stationary weapon minimap icons are always pre-colored even when only referenced via MenuIcon
-	const extraStwIcons = ["mini_stw_atgm", "mini_stw_aa_light", "mini_stw_aa_medium", "mini_stw_mortar", "mini_stw_mg"];
-	extraStwIcons.forEach((k) => {
+	// Ensure stationary weapon, ACV, AA and fallback minimap icons are always pre-colored
+	const extraIcons = [
+		"mini_stw_atgm", "mini_stw_aa_light", "mini_stw_aa_medium", "mini_stw_mortar", "mini_stw_mg",
+		"mini_apc_light", "mini_tec_logi", "mini_trk_aa", "mini_aav_light", "mini_shp_light", "crosshair_uav"
+	];
+	extraIcons.forEach((k) => {
 		imagesToColor.add(k);
 	});
 	
@@ -312,6 +314,24 @@ function createColoredMapIcons()
 //Called when all icons are done loading. Now the demo needs to be selected or loaded.
 function stage1LoadingFininshed() {
 	createColoredMapIcons()
+
+	const dbgParam = (getUrlParameter("debug") || "").toLowerCase();
+	if (dbgParam && typeof window.DebugLab !== "undefined") {
+		if (dbgParam === "mechanics" || dbgParam === "1") {
+			const stn = parseInt(getUrlParameter("station") || "1", 10) || 1;
+			window.DebugLab.launchMechanics(stn);
+			return;
+		} else if (dbgParam === "museum" || dbgParam === "assets" || dbgParam === "2") {
+			const wing = getUrlParameter("wing") || "ground";
+			window.DebugLab.launchAssetMuseum(wing);
+			return;
+		} else if (dbgParam === "structures" || dbgParam === "structs" || dbgParam === "3") {
+			const cat = getUrlParameter("cat") || "0";
+			const mp = getUrlParameter("map") !== null ? getUrlParameter("map") : "beirut";
+			window.DebugLab.launchStructuresMuseum(cat, mp);
+			return;
+		}
+	}
 
 	if (getUrlParameter("demo")) { 
 		setLoadingOverlayText("Preparing to load demo...")
@@ -453,22 +473,47 @@ function loadDemoFromFile()
 
 function loadDemoFromFileObject(file) {
 	if (!file) return;
+	if (typeof window.DebugLab !== "undefined" && typeof window.DebugLab.clearEnvironment === "function") {
+		window.DebugLab.clearEnvironment();
+	}
 	var reader = new FileReader()
 	reader.onloadend = () => {
-		window.DataBuffer = checkIfGZAndInflate(reader.result)
-		if (typeof messageArrayObject !== "undefined" && messageArrayObject) {
-			messageArrayObject.messages = []
-			messageArrayObject.pos = 0
-			if (typeof messageArrayObject.updateNewMessages === "function") {
-				messageArrayObject.updateNewMessages()
-			}
-		}
-		stage3LoadingFininshed()
+		window.loadDemoFromArrayBuffer(checkIfGZAndInflate(reader.result), file.name || "local.PRdemo");
 	}
 	reader.readAsArrayBuffer(file)
 
 	$("#copyLink")[0].style["cursor"] = "not-allowed";
 }
+
+window.loadDemoFromArrayBuffer = function(buffer, label) {
+	if (!buffer) return;
+	loadingComplete = false;
+	if (typeof Stop === "function") Stop();
+	if (typeof playerRows !== "undefined") {
+		for (var pid in playerRows) {
+			try { playerRow_Remove(pid); } catch (e) {}
+		}
+	}
+	if (typeof vehicleTables !== "undefined") {
+		for (var vid in vehicleTables) {
+			try { vehicleTable_Remove(vid); } catch (e) {}
+		}
+	}
+	const srvTbl = document.getElementById("serverinfoTable");
+	if (srvTbl) srvTbl.innerHTML = "";
+	MapSize = 0;
+
+	window.DataBuffer = buffer;
+	if (typeof messageArrayObject !== "undefined" && messageArrayObject) {
+		messageArrayObject.messages = [];
+		messageArrayObject.pos = 0;
+		messageArrayObject._lasttickIndex = 0;
+		if (typeof messageArrayObject.updateNewMessages === "function") {
+			messageArrayObject.updateNewMessages();
+		}
+	}
+	stage3LoadingFininshed();
+};
 
 
 var isParsingDone = false
@@ -656,15 +701,29 @@ function stage3LoadingFininshed()
 function ParseDemo_Start()
 {
 	if (typeof analyserPreloader !== "undefined") analyserPreloader.resetResults()
+	if (typeof resetPredictiveTimelineCollector === "function") resetPredictiveTimelineCollector()
+	if (typeof resetJetFlightTracks === "function") resetJetFlightTracks()
 	if (typeof markerDiagnostics !== "undefined") markerDiagnostics.length = 0
 	if (typeof savedStates !== "undefined") savedStates = {}
 	if (typeof LatestState !== "undefined") LatestState = -1
 	if (typeof tickToTime !== "undefined") tickToTime = [0]
 	if (typeof _timeCounter !== "undefined") _timeCounter = 0
+	// Always reset InitialParse & entity tables so reloading/switching demos populates PlayerActionTimeline & MotionTracks!
+	InitialParse = true
+	isParsingDone = false
 	isFastForwarding = true
 	messagePos = 0
 	Tick_Count = 0
-	
+	Tick_Current = 0
+	if (typeof AllPlayers !== "undefined") AllPlayers = {}
+	if (typeof AllVehicles !== "undefined") AllVehicles = {}
+	if (typeof AllFobs !== "undefined") AllFobs = {}
+	if (typeof AllRallies !== "undefined") AllRallies = {}
+	if (typeof AllFlags !== "undefined") AllFlags = {}
+	if (typeof AllCaches !== "undefined") AllCaches = {}
+	if (typeof AllSLOrders !== "undefined") AllSLOrders = {}
+	if (typeof AllProj !== "undefined") AllProj = {}
+
 	ParseDemo_Part()
 }
 function ParseDemo_Part()
@@ -691,6 +750,8 @@ function ParseDemo_End()
 	isFastForwarding = false;
 	isParsingDone = true
 	InitialParse = false
+	if (typeof finalizePredictiveTimeline === "function") finalizePredictiveTimeline()
+	if (typeof finalizeJetFlightTracks === "function") finalizeJetFlightTracks()
 	if (typeof markerDiagnosticsSummary === "function") markerDiagnosticsSummary()
 
 	// Safe double-verification of demo tickrate (do NOT mutate TICKSPERSAVE after savedStates were built)
@@ -728,9 +789,12 @@ function stage4LoadingFininshed()
 	//Remove demo selection interface
 	hideDemoSelectionInterface() 
 	
-	//Register keyboard events
-	$(document).keydown(onKeyDown)
-	$(document).keyup(onKeyUp)
+	//Register keyboard events once
+	if (!window._keyListenersBound) {
+		$(document).keydown(onKeyDown)
+		$(document).keyup(onKeyUp)
+		window._keyListenersBound = true
+	}
 	
 	//Show the demo interface
 	showInterface()
@@ -833,6 +897,11 @@ function stage4LoadingFininshed()
 	}, 1200);
 
 	loadingComplete = true;
+	if (typeof window._onDebugDemoLoaded === "function") {
+		const cb = window._onDebugDemoLoaded;
+		window._onDebugDemoLoaded = null;
+		try { cb(); } catch (e) { console.error("DebugLab post-load error:", e); }
+	}
 }
 
 function writeServerInfoTable()

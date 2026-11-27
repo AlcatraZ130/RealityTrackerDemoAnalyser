@@ -15,6 +15,7 @@ class Hud3d extends Initializable {
     initialized = false;
     dataReady = true;
     hitboxes = [];
+    hudHitboxes = [];
     _lastDrawTime = 0;
     _lastTick = null;
 
@@ -100,6 +101,11 @@ class Hud3d extends Initializable {
         const ctx = this.ctx;
         ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
         this.hitboxes = [];
+        this.hudHitboxes = [];
+
+        const fpvState = (typeof renderer3d !== "undefined" && typeof renderer3d.getActive1PVState === "function")
+            ? renderer3d.getActive1PVState()
+            : null;
 
         const nowMs = performance.now();
         const dt = (this._lastDrawTime > 0) ? Math.min(0.1, Math.max(0.001, (nowMs - this._lastDrawTime) / 1000.0)) : 0.016;
@@ -123,6 +129,7 @@ class Hud3d extends Initializable {
         // ---------------------------------------------------------------------
         if (typeof AllPlayers !== "undefined") {
             for (const pId in AllPlayers) {
+                if (fpvState && fpvState.active && Number(pId) === fpvState.fpvPlayerId) continue;
                 const p = AllPlayers[pId];
                 if (!p || p.isJoining || !p.isAlive) continue;
 
@@ -143,7 +150,10 @@ class Hud3d extends Initializable {
                 const spdKmh = (typeof getEntitySpeedKmh === "function") ? getEntitySpeedKmh(p) : 0;
 
                 let stance = "stand";
-                if (spdKmh >= 6.0) {
+                const forcedDbgStance = (typeof window !== "undefined" && window._debugForcedStances) ? window._debugForcedStances[Number(p.id != null ? p.id : pId)] : null;
+                if (forcedDbgStance) {
+                    stance = forcedDbgStance;
+                } else if (spdKmh >= 6.0) {
                     stance = "stand";
                 } else if (spdKmh >= 1.8) {
                     stance = (relY <= 0.65) ? "crouch" : "stand";
@@ -402,13 +412,16 @@ class Hud3d extends Initializable {
 
         if (typeof AllVehicles !== "undefined") {
             for (const vId in AllVehicles) {
+                if (fpvState && fpvState.active && Number(vId) === fpvState.fpvVehicleId) continue;
                 const v = AllVehicles[vId];
                 if (!v || v.isClimbingVehicle) continue;
                 if (!showEmptyVehicles && (!v.Passengers || v.Passengers.size === 0)) continue;
 
-                let vx = (typeof v.getX === "function") ? v.getX() : v.X;
-                let vy = (typeof v._smoothY === "number" && !isNaN(v._smoothY)) ? v._smoothY : ((typeof v.getY === "function") ? v.getY() : (v.Y || 0));
-                let vz = (typeof v.getZ === "function") ? v.getZ() : v.Z;
+                // Lock directly to the exact rendered 3D chassis pose (zero trailing lag or teleport-jumping on fast jets & helicopters)
+                const pose = v._poseCache;
+                let vx = (pose && typeof pose.posX === "number" && !isNaN(pose.posX)) ? pose.posX : ((typeof v.getX === "function") ? v.getX() : v.X);
+                let vy = (pose && typeof pose.smoothY === "number" && !isNaN(pose.smoothY)) ? pose.smoothY : ((typeof v._smoothY === "number" && !isNaN(v._smoothY)) ? v._smoothY : ((typeof v.getY === "function") ? v.getY() : (v.Y || 0)));
+                let vz = (pose && typeof pose.posZ === "number" && !isNaN(pose.posZ)) ? pose.posZ : ((typeof v.getZ === "function") ? v.getZ() : v.Z);
                 if (vx == null || isNaN(vx) || vz == null || isNaN(vz)) continue;
 
                 let groundH = 0;
@@ -417,14 +430,10 @@ class Hud3d extends Initializable {
                     if (!v.isFlyingVehicle) vy = Math.max(vy, groundH + 0.5);
                 }
 
-                // Smooth world-space "Follow" motion for vehicle HUD icon
-                const reappeared = (curTick != null && v._hudTick != null && Math.abs(curTick - v._hudTick) > 3);
-                const smoothVehPos = this._getSmoothedWorldPos(v, vx, vy + 2.4, vz, dt, forceSnap || reappeared);
                 if (curTick != null) v._hudTick = curTick;
-                if (!smoothVehPos.settled) anyIconMoving = true;
 
-                // Chassis top screen position
-                const vehProj = this.worldToScreen(smoothVehPos.x, smoothVehPos.y, smoothVehPos.z);
+                // Project directly from synced 3D chassis center (anchored firmly above jets, helis, and ground vehicles at any speed)
+                const vehProj = this.worldToScreen(vx, vy + 2.4, vz);
                 if (!vehProj) continue;
 
                 const distanceScale = Math.max(0.5, Math.min(1.15, 90.0 / Math.max(20.0, vehProj.dist)));
@@ -563,7 +572,7 @@ class Hud3d extends Initializable {
             selOrderSquad = SelectedSquadNumber;
         }
         if ((showOrders || (selOrderTeam > 0 && selOrderSquad > 0)) && typeof AllSLOrders !== "undefined" && typeof icons !== "undefined" && icons.squadorders) {
-            const orderEnums = [null, null, null, null, [0, "#cbc337"], [33, "#ff9900"], [66, "#ca32f2"], [99, "#ca32f2"], [132, "#ff9900"], [165, "#ff9900"]];
+            const orderEnums = [null, null, null, null, [0, "#cbc337"], [32, "#ff9900"], [64, "#ca32f2"], [96, "#ca32f2"], [128, "#ff9900"], [160, "#ff9900"]];
 
             for (const index in AllSLOrders) {
                 const order = AllSLOrders[index];
@@ -586,10 +595,10 @@ class Hud3d extends Initializable {
 
                 const iconX = e[0];
                 const drawW = Math.round(20 * scale);
-                const drawH = Math.round(32 * scale);
+                const drawH = Math.round(20 * scale);
 
                 ctx.save();
-                ctx.drawImage(icons.squadorders, iconX, 12, 20, 32, Math.round(ordProj.x - drawW * 0.5), Math.round(ordProj.y - drawH), drawW, drawH);
+                ctx.drawImage(icons.squadorders, iconX + 6, 12, 20, 20, Math.round(ordProj.x - drawW * 0.5), Math.round(ordProj.y - drawH), drawW, drawH);
 
                 ctx.fillStyle = (order.team === 1) ? "#ff3300" : "#2299ff";
                 ctx.strokeStyle = "#000000";
@@ -789,12 +798,380 @@ class Hud3d extends Initializable {
             ctx.restore();
         }
 
+        if (typeof window !== "undefined" && window.DebugLab && typeof window.DebugLab.draw3DHud === "function") {
+            window.DebugLab.draw3DHud(this, ctx);
+        }
+
+        if (fpvState && fpvState.active) {
+            this.draw1PVHud(ctx, fpvState);
+        }
+
         this._lastTick = curTick;
 
         // Continue animating smoothly until all icons settle onto their targets
         if (anyIconMoving && typeof is3DMode !== "undefined" && is3DMode && typeof requestUpdate === "function") {
             requestUpdate();
         }
+    }
+
+    draw1PVHud(ctx, fpvState) {
+        if (!ctx || !this.canvas || !fpvState || !fpvState.active) return;
+        const w = this.canvas.width;
+        const h = this.canvas.height;
+        const cx = w * 0.5;
+        const cy = h * 0.5;
+
+        const r3d = (typeof renderer3d !== "undefined") ? renderer3d : null;
+        const camYaw = r3d ? (r3d.cameraYaw || 0) : 0;
+        const baseFov = (r3d && r3d.baseFov) ? r3d.baseFov : 90.0;
+        const curFov = (r3d && r3d.fov) ? r3d.fov : baseFov;
+        const isZooming = !!(r3d && (r3d.isZooming || (typeof keysDown !== "undefined" && keysDown.has(86)) || curFov < baseFov - 2.0));
+        const mag = baseFov / Math.max(1.0, curFov);
+
+        // ---------------------------------------------------------------------
+        // 1. Top-Center Compact Compass Strip + Digital Bearing
+        // ---------------------------------------------------------------------
+        const bearing = (((-camYaw) % 360) + 360) % 360;
+        const bearingInt = Math.round(bearing) % 360;
+        const bearingText = String(bearingInt).padStart(3, "0") + "\u00B0";
+
+        const compW = Math.min(300, Math.max(200, Math.round(w * 0.28)));
+        const compH = 30;
+        const compX = Math.round(cx - compW * 0.5);
+        const compY = 14;
+
+        ctx.save();
+        ctx.fillStyle = "rgba(15, 22, 22, 0.78)";
+        ctx.fillRect(compX, compY, compW, compH);
+        ctx.strokeStyle = "rgba(143, 163, 161, 0.45)";
+        ctx.lineWidth = 1;
+        ctx.strokeRect(compX + 0.5, compY + 0.5, compW - 1, compH - 1);
+
+        // Clip compass tape
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(compX + 2, compY + 1, compW - 4, compH - 2);
+        ctx.clip();
+
+        const pxPerDeg = compW / 120.0;
+        const cardinals = { 0: "N", 45: "NE", 90: "E", 135: "SE", 180: "S", 225: "SW", 270: "W", 315: "NW" };
+        ctx.textAlign = "center";
+        ctx.textBaseline = "top";
+        for (let degStep = -75; degStep <= 75; degStep += 5) {
+            const worldDeg = Math.round((bearing + degStep) / 5) * 5;
+            const delta = worldDeg - bearing;
+            const tx = cx + delta * pxPerDeg;
+            if (tx < compX || tx > compX + compW) continue;
+            const normDeg = ((worldDeg % 360) + 360) % 360;
+            const isMajor = (normDeg % 45 === 0);
+            const isMid = (normDeg % 15 === 0);
+
+            ctx.strokeStyle = isMajor ? "rgba(220, 236, 233, 0.85)" : "rgba(170, 190, 188, 0.45)";
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.moveTo(Math.round(tx) + 0.5, compY + compH);
+            ctx.lineTo(Math.round(tx) + 0.5, compY + compH - (isMajor ? 8 : (isMid ? 6 : 3)));
+            ctx.stroke();
+
+            if (cardinals[normDeg]) {
+                ctx.font = "bold 10px Arial, sans-serif";
+                ctx.fillStyle = (normDeg === 0) ? "#e2c87a" : "#d9e6e4";
+                ctx.fillText(cardinals[normDeg], tx, compY + 5);
+            } else if (normDeg % 30 === 0) {
+                ctx.font = "9px monospace";
+                ctx.fillStyle = "rgba(180, 200, 198, 0.78)";
+                ctx.fillText(String(normDeg), tx, compY + 6);
+            }
+        }
+        ctx.restore();
+
+        // Center lubber triangle + bearing readout box
+        ctx.fillStyle = "#e2c87a";
+        ctx.beginPath();
+        ctx.moveTo(cx, compY + 2);
+        ctx.lineTo(cx - 4, compY - 3);
+        ctx.lineTo(cx + 4, compY - 3);
+        ctx.closePath();
+        ctx.fill();
+
+        const bBoxW = 42;
+        const bBoxH = 16;
+        const bBoxX = Math.round(cx - bBoxW * 0.5);
+        const bBoxY = compY + compH + 3;
+        ctx.fillStyle = "rgba(15, 22, 22, 0.85)";
+        ctx.fillRect(bBoxX, bBoxY, bBoxW, bBoxH);
+        ctx.strokeStyle = "rgba(143, 163, 161, 0.55)";
+        ctx.strokeRect(bBoxX + 0.5, bBoxY + 0.5, bBoxW - 1, bBoxH - 1);
+        ctx.font = "bold 10px monospace";
+        ctx.fillStyle = "#eef6f5";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText(bearingText, cx, bBoxY + bBoxH * 0.5 + 0.5);
+
+        // ---------------------------------------------------------------------
+        // 2. Center Crosshair / Tactical Optic Reticle
+        // ---------------------------------------------------------------------
+        if (fpvState.fpvEnclosed || isZooming) {
+            const ringR = Math.min(w, h) * 0.30;
+            if (fpvState.fpvEnclosed) {
+                ctx.strokeStyle = "rgba(140, 210, 195, 0.38)";
+                ctx.lineWidth = 1.2;
+                ctx.beginPath();
+                ctx.arc(cx, cy, ringR, 0, Math.PI * 2);
+                ctx.stroke();
+            }
+
+            const armLen = Math.min(96, Math.max(46, ringR * 0.45));
+            const gap = 5;
+            ctx.strokeStyle = "rgba(210, 245, 232, 0.82)";
+            ctx.lineWidth = 1.25;
+            ctx.beginPath();
+            ctx.moveTo(cx - armLen, cy); ctx.lineTo(cx - gap, cy);
+            ctx.moveTo(cx + gap, cy); ctx.lineTo(cx + armLen, cy);
+            ctx.moveTo(cx, cy - armLen); ctx.lineTo(cx, cy - gap);
+            ctx.moveTo(cx, cy + gap); ctx.lineTo(cx, cy + armLen);
+            ctx.stroke();
+
+            // Mil ticks along axes
+            ctx.lineWidth = 1;
+            const tickStep = 16;
+            for (let t = tickStep; t <= armLen - 6; t += tickStep) {
+                const tickHalf = (t % (tickStep * 2) === 0) ? 4 : 2.5;
+                ctx.beginPath();
+                ctx.moveTo(cx - t, cy - tickHalf); ctx.lineTo(cx - t, cy + tickHalf);
+                ctx.moveTo(cx + t, cy - tickHalf); ctx.lineTo(cx + t, cy + tickHalf);
+                ctx.moveTo(cx - tickHalf, cy - t); ctx.lineTo(cx + tickHalf, cy - t);
+                ctx.moveTo(cx - tickHalf, cy + t); ctx.lineTo(cx + tickHalf, cy + t);
+                ctx.stroke();
+            }
+
+            ctx.fillStyle = "rgba(210, 245, 232, 0.9)";
+            ctx.beginPath();
+            ctx.arc(cx, cy, 1.5, 0, Math.PI * 2);
+            ctx.fill();
+
+            if (isZooming || mag > 1.08) {
+                ctx.font = "bold 10px monospace";
+                ctx.fillStyle = "rgba(210, 245, 232, 0.90)";
+                ctx.textAlign = "left";
+                ctx.textBaseline = "middle";
+                ctx.fillText(mag.toFixed(1) + "x", cx + 14, cy + 14);
+            }
+        } else {
+            const gap = 4;
+            const len = 8;
+            ctx.strokeStyle = "rgba(0, 0, 0, 0.65)";
+            ctx.lineWidth = 2.5;
+            ctx.beginPath();
+            ctx.moveTo(cx - gap - len, cy); ctx.lineTo(cx - gap, cy);
+            ctx.moveTo(cx + gap, cy); ctx.lineTo(cx + gap + len, cy);
+            ctx.moveTo(cx, cy - gap - len); ctx.lineTo(cx, cy - gap);
+            ctx.moveTo(cx, cy + gap); ctx.lineTo(cx, cy + gap + len);
+            ctx.stroke();
+
+            ctx.strokeStyle = "rgba(230, 242, 240, 0.85)";
+            ctx.lineWidth = 1.25;
+            ctx.beginPath();
+            ctx.moveTo(cx - gap - len, cy); ctx.lineTo(cx - gap, cy);
+            ctx.moveTo(cx + gap, cy); ctx.lineTo(cx + gap + len, cy);
+            ctx.moveTo(cx, cy - gap - len); ctx.lineTo(cx, cy - gap);
+            ctx.moveTo(cx, cy + gap); ctx.lineTo(cx, cy + gap + len);
+            ctx.stroke();
+        }
+
+        // ---------------------------------------------------------------------
+        // 3. Bottom-Center Tactical Info Bar + Action Buttons
+        // ---------------------------------------------------------------------
+        const p = fpvState.player;
+        const v = fpvState.vehicle;
+        const spdEntity = v || p;
+        const spdKmh = (spdEntity && typeof getEntitySpeedKmh === "function") ? getEntitySpeedKmh(spdEntity) : 0;
+
+        let altStr = "";
+        if (r3d && r3d.cameraPos) {
+            const wx = r3d.cameraPos[0];
+            const wy = r3d.cameraPos[1];
+            const wz = -r3d.cameraPos[2];
+            const gh = (typeof heightmap !== "undefined") ? heightmap.getHeightFromCoords(wx, wz) : 0;
+            const agl = Math.max(0, Math.round(wy - gh));
+            if ((v && v.isFlyingVehicle) || agl >= 5) {
+                altStr = `  |  ALT ${agl}m`;
+            }
+        }
+
+        let unitTitle = "1PV";
+        let kitStr = "";
+        if (p) {
+            unitTitle = p.name || "Soldier";
+            if (p.kit) {
+                kitStr = (typeof kitNameToReadable === "function") ? kitNameToReadable(p.kit) : p.kit;
+            }
+        } else if (v) {
+            unitTitle = (typeof vehicleData !== "undefined" && v.name in vehicleData && vehicleData[v.name].HudName)
+                ? vehicleData[v.name].HudName
+                : (v.name || "Vehicle");
+        }
+
+        let vehSeatStr = "";
+        if (v) {
+            const vName = (typeof vehicleData !== "undefined" && v.name in vehicleData && vehicleData[v.name].HudName)
+                ? vehicleData[v.name].HudName
+                : (v.name || "Vehicle");
+            let seatLabel = "";
+            if (p) {
+                let rawSeat = p.vehicleSeatName || "";
+                if (v.name && rawSeat.startsWith(v.name)) {
+                    rawSeat = rawSeat.substring(v.name.length);
+                    if (rawSeat.startsWith("_")) rawSeat = rawSeat.substring(1);
+                }
+                if (rawSeat.length > 0) {
+                    seatLabel = rawSeat.charAt(0).toUpperCase() + rawSeat.substring(1);
+                } else {
+                    seatLabel = (p.vehicleSlot === 0) ? "Driver" : (p.vehicleSlot === 1 ? "Gunner" : "Passenger");
+                }
+            }
+            const seatCounter = (fpvState.crewCount > 0 && fpvState.seatIndex >= 0)
+                ? ` [Seat ${fpvState.seatIndex + 1}/${fpvState.crewCount}]`
+                : (fpvState.crewCount === 0 ? " [Empty]" : "");
+            vehSeatStr = p ? `${vName} - ${seatLabel}${seatCounter}` : `${vName}${seatCounter}`;
+        }
+
+        // Health calculation
+        let hpCur = 0, hpMax = 100;
+        if (v && v.maxHealth > 0) {
+            hpCur = Math.max(0, Math.round(v.health || 0));
+            hpMax = Math.max(1, Math.round(v.maxHealth));
+        } else if (p) {
+            hpCur = p.isAlive ? Math.max(0, Math.round(p.health || 0)) : 0;
+            hpMax = 100;
+        }
+        const hpPct = Math.max(0, Math.min(1, hpCur / hpMax));
+
+        const infoLine1 = kitStr ? `${unitTitle} (${kitStr})` : unitTitle;
+        const infoLine2 = (vehSeatStr ? `${vehSeatStr}  |  ` : "") + `SPD ${spdKmh.toFixed(0)} km/h${altStr}`;
+
+        // Action Buttons
+        const buttons = [];
+        if (fpvState.mode === "vehicle" && fpvState.crewCount > 1) {
+            buttons.push({
+                label: "< Seat",
+                onClick: () => {
+                    if (typeof cycleSelectedVehiclePassenger === "function") cycleSelectedVehiclePassenger(-1);
+                }
+            });
+            buttons.push({
+                label: "Seat >",
+                onClick: () => {
+                    if (typeof cycleSelectedVehiclePassenger === "function") cycleSelectedVehiclePassenger(1);
+                }
+            });
+        }
+        if (r3d && (Math.abs(r3d.fpvYawOffset || 0) > 1.0 || Math.abs(r3d.fpvPitch || 0) > 1.0)) {
+            buttons.push({
+                label: "Center Look",
+                onClick: () => {
+                    r3d.fpvYawOffset = 0;
+                    r3d.fpvPitch = 0;
+                    if (typeof requestUpdate === "function") requestUpdate();
+                }
+            });
+        }
+        buttons.push({
+            label: "Exit 1PV (F)",
+            accent: true,
+            onClick: () => {
+                if (typeof toggleFirstPersonView === "function") toggleFirstPersonView(false);
+            }
+        });
+
+        // Measure bar dimensions
+        ctx.font = "bold 11px Arial, sans-serif";
+        const w1 = ctx.measureText(infoLine1).width;
+        ctx.font = "10.5px Arial, sans-serif";
+        const w2 = ctx.measureText(infoLine2).width;
+
+        ctx.font = "bold 10px Arial, sans-serif";
+        let btnsTotalW = 0;
+        const btnSpecs = buttons.map((b) => {
+            const bw = Math.ceil(ctx.measureText(b.label).width) + 14;
+            btnsTotalW += bw;
+            return { ...b, w: bw, h: 19 };
+        });
+        if (btnSpecs.length > 1) btnsTotalW += (btnSpecs.length - 1) * 5;
+
+        const barW = Math.max(280, Math.min(w - 30, Math.ceil(Math.max(w1 + 90, w2 + 24, btnsTotalW + 24))));
+        const barH = 62;
+
+        // Place cleanly above #controlBarContainer
+        let bottomClearance = 20;
+        const ctrlBar = document.getElementById("controlBarContainer");
+        if (ctrlBar && ctrlBar.offsetHeight > 0 && ctrlBar.style.display !== "none") {
+            const cRect = this.canvas.getBoundingClientRect();
+            const tRect = ctrlBar.getBoundingClientRect();
+            if (cRect && tRect && cRect.height > 0) {
+                const scaleY = this.canvas.height / cRect.height;
+                bottomClearance = Math.max(18, Math.round((cRect.bottom - tRect.top) * scaleY) + 10);
+            }
+        }
+
+        const barX = Math.round(cx - barW * 0.5);
+        const barY = Math.max(66, h - bottomClearance - barH);
+
+        ctx.fillStyle = "rgba(15, 22, 22, 0.84)";
+        ctx.fillRect(barX, barY, barW, barH);
+        ctx.strokeStyle = "rgba(143, 163, 161, 0.48)";
+        ctx.lineWidth = 1;
+        ctx.strokeRect(barX + 0.5, barY + 0.5, barW - 1, barH - 1);
+
+        // Line 1: Name / Kit + Health Bar on right
+        ctx.font = "bold 11px Arial, sans-serif";
+        ctx.fillStyle = "#eef6f5";
+        ctx.textAlign = "left";
+        ctx.textBaseline = "middle";
+        ctx.fillText(infoLine1, barX + 10, barY + 12);
+
+        const hpBarW = 64;
+        const hpBarH = 6;
+        const hpBarX = barX + barW - hpBarW - 10;
+        const hpBarY = barY + 9;
+        ctx.fillStyle = "rgba(0, 0, 0, 0.65)";
+        ctx.fillRect(hpBarX, hpBarY, hpBarW, hpBarH);
+        ctx.fillStyle = (hpPct <= 0.30) ? "#ff4444" : ((hpPct <= 0.60) ? "#ffbb22" : "#35d448");
+        ctx.fillRect(hpBarX, hpBarY, Math.round(hpBarW * hpPct), hpBarH);
+        ctx.strokeStyle = "rgba(255, 255, 255, 0.25)";
+        ctx.strokeRect(hpBarX + 0.5, hpBarY + 0.5, hpBarW - 1, hpBarH - 1);
+
+        // Line 2: Vehicle / Seat / Speed / Altitude
+        ctx.font = "10.5px Arial, sans-serif";
+        ctx.fillStyle = "#bfd0ce";
+        ctx.fillText(infoLine2, barX + 10, barY + 28);
+
+        // Line 3: Clickable Action Buttons centered
+        let bx = Math.round(cx - btnsTotalW * 0.5);
+        const by = barY + 38;
+        ctx.font = "bold 10px Arial, sans-serif";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        for (let i = 0; i < btnSpecs.length; i++) {
+            const b = btnSpecs[i];
+            ctx.fillStyle = b.accent ? "rgba(92, 42, 42, 0.88)" : "rgba(44, 64, 62, 0.88)";
+            ctx.fillRect(bx, by, b.w, b.h);
+            ctx.strokeStyle = b.accent ? "rgba(210, 120, 120, 0.75)" : "rgba(143, 163, 161, 0.65)";
+            ctx.strokeRect(bx + 0.5, by + 0.5, b.w - 1, b.h - 1);
+            ctx.fillStyle = "#eef6f5";
+            ctx.fillText(b.label, bx + b.w * 0.5, by + b.h * 0.5 + 0.5);
+
+            this.hudHitboxes.push({
+                x: bx,
+                y: by,
+                w: b.w,
+                h: b.h,
+                onClick: b.onClick
+            });
+            bx += b.w + 5;
+        }
+
+        ctx.restore();
     }
 
     _getSmoothedWorldPos(ent, targetX, targetY, targetZ, dt, instant) {
@@ -837,14 +1214,48 @@ class Hud3d extends Initializable {
         return { x: ent._hudX, y: ent._hudY, z: ent._hudZ, settled: false };
     }
 
-    pickEntityAtScreenPos(screenX, screenY) {
-        if (!this.initialized || !this.canvas || !this.hitboxes || this.hitboxes.length === 0) return null;
-
+    _toCanvasCoords(screenX, screenY) {
+        if (!this.canvas) return null;
         const rect = this.canvas.getBoundingClientRect();
         const scaleX = (rect && rect.width > 0) ? (this.canvas.width / rect.width) : 1.0;
         const scaleY = (rect && rect.height > 0) ? (this.canvas.height / rect.height) : 1.0;
-        const cx = screenX * scaleX;
-        const cy = screenY * scaleY;
+        return { x: screenX * scaleX, y: screenY * scaleY };
+    }
+
+    pickHudButtonAtScreenPos(screenX, screenY) {
+        if (!this.initialized || !this.canvas || !this.hudHitboxes || this.hudHitboxes.length === 0) return null;
+        const pt = this._toCanvasCoords(screenX, screenY);
+        if (!pt) return null;
+        for (let i = this.hudHitboxes.length - 1; i >= 0; i--) {
+            const hb = this.hudHitboxes[i];
+            if (pt.x >= hb.x && pt.x <= hb.x + hb.w && pt.y >= hb.y && pt.y <= hb.y + hb.h) {
+                return hb;
+            }
+        }
+        return null;
+    }
+
+    handleHudClick(screenX, screenY) {
+        const hb = this.pickHudButtonAtScreenPos(screenX, screenY);
+        if (!hb) return false;
+        if (typeof hb.onClick === "function") {
+            hb.onClick();
+        }
+        if (typeof requestUpdate === "function") requestUpdate();
+        return true;
+    }
+
+    pickEntityAtScreenPos(screenX, screenY, includeHudButtons = true) {
+        if (!this.initialized || !this.canvas) return null;
+        if (includeHudButtons && this.pickHudButtonAtScreenPos(screenX, screenY)) {
+            return { _isHudAction: true };
+        }
+        if (!this.hitboxes || this.hitboxes.length === 0) return null;
+
+        const pt = this._toCanvasCoords(screenX, screenY);
+        if (!pt) return null;
+        const cx = pt.x;
+        const cy = pt.y;
 
         let best = null;
         let bestScore = Infinity;

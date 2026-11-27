@@ -469,6 +469,8 @@ class Building3dRenderer extends Initializable {
             uniform sampler2DArray uTexArray;
             uniform int uPassMode;
             uniform vec3 uSunDir;
+            uniform vec3 uCameraPos;
+            uniform int uUsePrReflections;
             uniform mat4 uLightSpaceMatrix;
             uniform sampler2DShadow uShadowMap;
             uniform int uUseShadows;
@@ -498,7 +500,7 @@ ${lodFadeBlock}
                     albedo = clamp(vColor, 0.0, 1.0);
                 } else {
                     vec4 texSample = texture(uTexArray, vec3(vUV, float(vLayer)));
-                    ${withAlphaDiscard ? "float viewDist = 1.0 / max(gl_FragCoord.w, 1e-6); float alphaCutoff = mix(0.32, 0.14, clamp((viewDist - 60.0) / 380.0, 0.0, 1.0)); if (texSample.a < alphaCutoff) discard;" : ""}
+                    ${withAlphaDiscard ? "float viewDist = 1.0 / max(gl_FragCoord.w, 1e-6); float ign = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715)))); float nearCut = mix(0.16, 0.48, ign); float farCut = 0.14; float alphaCutoff = mix(nearCut, farCut, clamp((viewDist - 45.0) / 340.0, 0.0, 1.0)); if (texSample.a < alphaCutoff) discard;" : ""}
                     albedo = clamp(vColor * texSample.rgb * 1.85, 0.0, 1.0);
                 }
 
@@ -506,23 +508,39 @@ ${lodFadeBlock}
                 if (!gl_FrontFacing) norm = -norm;
 
                 highp vec3 sunDir = normalize(uSunDir);
-                highp float sunDiff = max(dot(norm, sunDir), 0.0);
-                if (uUseShadows == 1 && sunDiff > 0.001) {
-                    float sh = sampleBldgShadow(vWorldPos, norm, sunDiff);
-                    sunDiff *= mix(0.14, 1.0, sh);
+                highp float rawNdotL = max(dot(norm, sunDir), 0.0);
+                // PR RealityShaders Half-Lambert (RDirectXTK_GetHalfNL)
+                highp float halfNL = dot(norm, sunDir) * 0.5 + 0.5;
+                highp float sunDiff = halfNL * halfNL;
+                highp float shadowVis = 1.0;
+                if (uUseShadows == 1 && rawNdotL > 0.001) {
+                    shadowVis = sampleBldgShadow(vWorldPos, norm, rawNdotL);
+                    sunDiff *= mix(0.16, 1.0, shadowVis);
                 }
 
                 highp vec3 skyDir = normalize(vec3(-sunDir.x, 0.65, -sunDir.z));
                 highp float skyDiff = max(dot(norm, skyDir), 0.0);
 
                 highp float skyFactor = clamp(norm.y * 0.5 + 0.5, 0.0, 1.0);
-                highp float ambient = 0.38 + (0.16 * skyDiff) + (0.14 * skyFactor);
+                highp float ambient = 0.32 + (0.15 * skyDiff) + (0.14 * skyFactor);
                 if (uUseVertexAO == 1 && vVertexAO > 0.002) {
                     ambient *= mix(0.28, 1.0, vVertexAO);
                 }
-                highp float lighting = ambient + (0.44 * sunDiff);
+                highp float lighting = ambient + (0.50 * sunDiff);
+                highp vec3 finalCol = albedo * lighting;
 
-                fragColor = vec4(albedo * lighting, 1.0);
+                if (uUsePrReflections == 1 && uPassMode != 2) {
+                    highp vec3 V = normalize(uCameraPos - vWorldPos);
+                    highp vec3 H = normalize(sunDir + V);
+                    highp float luma = dot(albedo, vec3(0.299, 0.587, 0.114));
+                    highp float spec = pow(max(dot(norm, H), 0.0), 26.0) * rawNdotL * shadowVis * smoothstep(0.10, 0.55, luma);
+                    highp float fres = pow(1.0 - max(dot(norm, V), 0.0), 3.6);
+                    finalCol += vec3(1.0, 0.95, 0.86) * (spec * 0.18);
+                    finalCol += vec3(0.62, 0.72, 0.84) * (fres * 0.09 * skyFactor);
+                    finalCol = clamp(finalCol, 0.0, 1.0);
+                }
+
+                fragColor = vec4(finalCol, 1.0);
             }
         `;
     }
@@ -542,6 +560,7 @@ ${lodFadeBlock}
             uniform highp isampler2D uVisibleIdsTex;
             uniform int uBaseInstance;
             uniform int uUseStructureColors;
+            ${withAlphaDiscard ? "uniform float uWindTime;" : ""}
 
             out highp vec3 vNormal;
             out highp vec3 vColor;
@@ -564,6 +583,18 @@ ${lodFadeBlock}
 
                 vec4 pos4 = vec4(aVertexPosition, 1.0);
                 vec3 worldPos = vec3(dot(row0, pos4), dot(row1, pos4), dot(row2, pos4));
+                ${withAlphaDiscard ? `
+                if (uWindTime > 0.001) {
+                    // PR RaShaderLeaf.fx wind formula: ObjRadii = ObjRadius + Pos.y; taller canopies sway slower
+                    float hPos = max(aVertexPosition.y, 0.0);
+                    float objRadii = 2.0 + hPos;
+                    float phase = worldPos.x * 0.11 + worldPos.z * 0.09;
+                    float sway = sin((uWindTime / objRadii) * 4.5 + phase) * (objRadii * objRadii) / 260.0;
+                    float hMask = smoothstep(0.25, 2.2, hPos);
+                    worldPos.x += sway * hMask;
+                    worldPos.z += cos((uWindTime / objRadii) * 3.8 + phase * 1.15) * (objRadii * objRadii) / 340.0 * hMask;
+                }
+                ` : ""}
                 vWorldPos = worldPos;
                 gl_Position = uProjectionMatrix * uViewMatrix * vec4(worldPos, 1.0);
 
@@ -608,6 +639,9 @@ ${lodFadeBlock}
             uTexArray: gl.getUniformLocation(prog, 'uTexArray'),
             uPassMode: gl.getUniformLocation(prog, 'uPassMode'),
             uSunDir: gl.getUniformLocation(prog, 'uSunDir'),
+            uCameraPos: gl.getUniformLocation(prog, 'uCameraPos'),
+            uUsePrReflections: gl.getUniformLocation(prog, 'uUsePrReflections'),
+            uWindTime: withAlphaDiscard ? gl.getUniformLocation(prog, 'uWindTime') : null,
             uLightSpaceMatrix: gl.getUniformLocation(prog, 'uLightSpaceMatrix'),
             uShadowMap: gl.getUniformLocation(prog, 'uShadowMap'),
             uUseShadows: gl.getUniformLocation(prog, 'uUseShadows'),
@@ -675,6 +709,9 @@ ${lodFadeBlock}
             uTexArray: gl.getUniformLocation(prog, 'uTexArray'),
             uPassMode: gl.getUniformLocation(prog, 'uPassMode'),
             uSunDir: gl.getUniformLocation(prog, 'uSunDir'),
+            uCameraPos: gl.getUniformLocation(prog, 'uCameraPos'),
+            uUsePrReflections: gl.getUniformLocation(prog, 'uUsePrReflections'),
+            uWindTime: withAlphaDiscard ? gl.getUniformLocation(prog, 'uWindTime') : null,
             uLightSpaceMatrix: gl.getUniformLocation(prog, 'uLightSpaceMatrix'),
             uShadowMap: gl.getUniformLocation(prog, 'uShadowMap'),
             uUseShadows: gl.getUniformLocation(prog, 'uUseShadows'),
@@ -872,17 +909,20 @@ ${lodFadeBlock}
                 if (!gl_FrontFacing) norm = -norm;
 
                 highp vec3 sunDir = normalize(uSunDir);
-                highp float sunDiff = max(dot(norm, sunDir), 0.0);
-                if (uUseShadows == 1 && sunDiff > 0.001) {
-                    float sh = sampleSolidShadow(vWorldPos, norm, sunDiff);
-                    sunDiff *= mix(0.16, 1.0, sh);
+                highp float rawNdotL = max(dot(norm, sunDir), 0.0);
+                // PR RealityShaders Half-Lambert (RDirectXTK_GetHalfNL)
+                highp float halfNL = dot(norm, sunDir) * 0.5 + 0.5;
+                highp float sunDiff = halfNL * halfNL;
+                if (uUseShadows == 1 && rawNdotL > 0.001) {
+                    float sh = sampleSolidShadow(vWorldPos, norm, rawNdotL);
+                    sunDiff *= mix(0.18, 1.0, sh);
                 }
 
                 highp vec3 skyDir = normalize(vec3(-sunDir.x, 0.65, -sunDir.z));
                 highp float skyDiff = max(dot(norm, skyDir), 0.0);
 
                 highp float skyFactor = clamp(norm.y * 0.5 + 0.5, 0.0, 1.0);
-                highp float lighting = 0.27 + (0.42 * sunDiff) + (0.16 * skyDiff) + (0.15 * skyFactor);
+                highp float lighting = 0.22 + (0.48 * sunDiff) + (0.15 * skyDiff) + (0.15 * skyFactor);
 
                 highp vec3 baseCol = vColor.rgb;
                 if (vColor.a < 0.75) {
@@ -926,16 +966,25 @@ ${lodFadeBlock}
 
             uniform mat4 uViewMatrix;
             uniform mat4 uProjectionMatrix;
+            uniform float uWindTime;
 
             out highp vec3 vNormal;
             out highp vec4 vColor;
             out highp vec3 vWorldPos;
 
             void main(void) {
-                gl_Position = uProjectionMatrix * uViewMatrix * vec4(aVertexPosition, 1.0);
+                vec3 wp = aVertexPosition;
+                if (uWindTime > 0.001) {
+                    float wFactor = clamp(aVertexNormal.y * 0.5 + 0.5, 0.0, 1.0);
+                    float phase = wp.x * 0.23 + wp.z * 0.19;
+                    float sway = sin(uWindTime * 1.7 + phase) + 0.4 * sin(uWindTime * 3.6 + phase * 1.6);
+                    wp.x += sway * 0.085 * wFactor;
+                    wp.z += cos(uWindTime * 1.45 + phase * 0.85) * 0.065 * wFactor;
+                }
+                gl_Position = uProjectionMatrix * uViewMatrix * vec4(wp, 1.0);
                 vNormal = aVertexNormal;
                 vColor = aVertexColor;
-                vWorldPos = aVertexPosition;
+                vWorldPos = wp;
             }
         `;
 
@@ -1020,6 +1069,7 @@ ${lodFadeBlock}
         this.bViewMatrix = gl.getUniformLocation(bushProg, 'uViewMatrix');
         this.bCameraPos = gl.getUniformLocation(bushProg, 'uCameraPos');
         this.bSunDir = gl.getUniformLocation(bushProg, 'uSunDir');
+        this.bWindTime = gl.getUniformLocation(bushProg, 'uWindTime');
         this.bUseFog = gl.getUniformLocation(bushProg, 'uUseFog');
         this.bFogOrigin = gl.getUniformLocation(bushProg, 'uFogOrigin');
         this.bFogRange = gl.getUniformLocation(bushProg, 'uFogRange');
@@ -1207,6 +1257,13 @@ ${lodFadeBlock}
             gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_WRAP_T, gl.REPEAT);
             gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
             gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+            const anisoExt = gl.getExtension('EXT_texture_filter_anisotropic')
+                || gl.getExtension('MOZ_EXT_texture_filter_anisotropic')
+                || gl.getExtension('WEBKIT_EXT_texture_filter_anisotropic');
+            if (anisoExt) {
+                const maxAniso = gl.getParameter(anisoExt.MAX_TEXTURE_MAX_ANISOTROPY_EXT) || 1;
+                gl.texParameterf(gl.TEXTURE_2D_ARRAY, anisoExt.TEXTURE_MAX_ANISOTROPY_EXT, Math.min(16, maxAniso));
+            }
             gl.bindTexture(gl.TEXTURE_2D_ARRAY, null);
 
             // Upload single shared template VBO + IBO into a dedicated VAO (32 bytes per vertex)
@@ -2002,9 +2059,11 @@ ${lodFadeBlock}
         for (let c = 0; c < cells.length; c++) {
             const cell = cells[c];
             const pChunk = (cell.parentChunkIdx >= 0 && staticChunks) ? staticChunks[cell.parentChunkIdx] : null;
-            if (pChunk && pChunk.activeMode === 0) continue;
-            const useChunkForStructs = !!(pChunk && pChunk.activeMode === 2);
-            const activeIndices = useChunkForStructs ? cell.foliageIndices : cell.indices;
+            // Static chunks only bound structures, NEVER foliage. If pChunk is culled (activeMode === 0)
+            // or drawn as a merged distant chunk (activeMode === 2), only skip structures and still test
+            // the cell's own AABB for its trees/foliage so trees never pop out when a distant building leaves frustum!
+            const skipStructsInCell = !!(pChunk && (pChunk.activeMode === 0 || pChunk.activeMode === 2));
+            const activeIndices = skipStructsInCell ? cell.foliageIndices : cell.indices;
             if (!activeIndices || activeIndices.length === 0) continue;
 
             // 1. Test 128m x 128m cell AABB against 6 frustum planes
@@ -2849,6 +2908,9 @@ ${lodFadeBlock}
         const useShadows = !!(renderer3d.shadowsActiveThisFrame && renderer3d.shadowDepthTex);
         // Combined Ambient Occlusion toggle activates both real-time SSAO and baked Vertex AO
         const useVertexAO = (typeof options_3dAoSsao !== "undefined" && options_3dAoSsao) ? 1 : 0;
+        const usePrRefl = (typeof options_3dPrReflections !== "undefined" && !!options_3dPrReflections) ? 1 : 0;
+        const windTime = (typeof options_3dWind !== "undefined" && !!options_3dWind) ? ((performance.now() * 0.001) % 10000.0 + 0.01) : 0.0;
+        const cam = renderer3d.cameraPos;
 
         gl.activeTexture(gl.TEXTURE5);
         gl.bindTexture(gl.TEXTURE_2D, useShadows ? renderer3d.shadowDepthTex : (renderer3d.shadowDummyTex || null));
@@ -2856,6 +2918,9 @@ ${lodFadeBlock}
 
         const bindLightingUniforms = (progInfo) => {
             if (progInfo.uSunDir !== null) gl.uniform3f(progInfo.uSunDir, sunDir[0], sunDir[1], sunDir[2]);
+            if (progInfo.uCameraPos !== null && progInfo.uCameraPos !== undefined) gl.uniform3f(progInfo.uCameraPos, cam[0], cam[1], cam[2]);
+            if (progInfo.uUsePrReflections !== null && progInfo.uUsePrReflections !== undefined) gl.uniform1i(progInfo.uUsePrReflections, usePrRefl);
+            if (progInfo.uWindTime !== null && progInfo.uWindTime !== undefined) gl.uniform1f(progInfo.uWindTime, windTime);
             if (progInfo.uShadowMap !== null) gl.uniform1i(progInfo.uShadowMap, 5);
             if (progInfo.uUseShadows !== null) gl.uniform1i(progInfo.uUseShadows, useShadows ? 1 : 0);
             if (useShadows && progInfo.uLightSpaceMatrix !== null) {
@@ -3087,6 +3152,10 @@ ${lodFadeBlock}
         if (this.bSunDir !== null) {
             const sunDir = (typeof renderer3d.getMapSunDirection === "function") ? renderer3d.getMapSunDirection() : [0.4508, 0.8515, -0.3005];
             gl.uniform3f(this.bSunDir, sunDir[0], sunDir[1], sunDir[2]);
+        }
+        if (this.bWindTime !== null && this.bWindTime !== undefined) {
+            const windT = (typeof options_3dWind !== "undefined" && !!options_3dWind) ? ((performance.now() * 0.001) % 10000.0 + 0.01) : 0.0;
+            gl.uniform1f(this.bWindTime, windT);
         }
         if (this.bUseFog !== null) {
             const fogOn = !!(renderer3d.fogCullActive && typeof renderer3d.getMapFogConfig === "function");

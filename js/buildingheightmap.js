@@ -266,6 +266,23 @@ class BuildingHeightmap {
         this.pendingCustomObjects = [];
         this._footprintCacheBuilt = null;
 
+        if (typeof window !== "undefined" && window._debugHideMapStatics) {
+            this._initGrid(heightmapConfig);
+            this.mesh3dDb = {};
+            this.initialized = true;
+            this._loading = false;
+            this.triggerCanvasRedraw();
+            if (typeof building3dRenderer !== "undefined" && building3dRenderer.initialized) {
+                building3dRenderer._disposeChunkList(renderer3d.gl, building3dRenderer.treeChunks);
+                building3dRenderer._disposeChunkList(renderer3d.gl, building3dRenderer.structChunks);
+                building3dRenderer._disposeBushChunks(renderer3d.gl);
+                building3dRenderer.chunks = [];
+                building3dRenderer.hasGeometry = false;
+                building3dRenderer.currentMap = mapKey;
+            }
+            return;
+        }
+
         // - 1. Load overrides JSON (MapCollisionEditor edits) --
         const cacheBuster  = `?t=${Date.now()}`;
         const overrideUrl  = `MapFootprintOverrides/${mapKey}/${mapKey}_obb_overrides.json`;
@@ -1365,7 +1382,10 @@ class BuildingHeightmap {
         if (!list || list.length === 0) return terrainH;
 
         let bestY = terrainH;
-        const maxTopAllowed = (y > terrainH + 1.05) ? (y + 0.35) : (y + 0.05);
+        // Allow up to +0.68m above quantized Int16 pelvis y for exact 3D mesh floors/stairs/slabs
+        // (ceilings are >= 2.0m above pelvis, so +0.68m lifts buried boots onto slabs without snapping to upper floors)
+        const maxTopMeshAllowed = y + 0.68;
+        const maxTopObbAllowed = (y > terrainH + 1.05) ? (y + 0.35) : (y + 0.15);
 
         for (let i = 0; i < list.length; i++) {
             const obb = list[i];
@@ -1373,7 +1393,7 @@ class BuildingHeightmap {
 
             const obbTop = obb.maxY;
             if (obbTop == null || isNaN(obbTop) || obbTop <= bestY) continue;
-            if (obb.minY != null && !isNaN(obb.minY) && obb.minY > y + 0.40) continue;
+            if (obb.minY != null && !isNaN(obb.minY) && obb.minY > y + 0.75) continue;
 
             const rad = -(obb.yaw || 0) * Math.PI / 180;
             const cosR = Math.cos(rad), sinR = Math.sin(rad);
@@ -1419,7 +1439,8 @@ class BuildingHeightmap {
                         if (det * det < 0.55 * (nx * nx + det * det + nz * nz)) continue; // Skip steep/wall faces (> ~42 deg)
 
                         const triY = obbY + y0 + u * dy2 + v * dy1;
-                        if (triY <= maxTopAllowed && Math.abs(y - triY) <= 1.35 && triY > meshHitY) {
+                        // Allow up to 2.35m below ref y and +0.68m above (handles standing pelvis + Int16 quantization over slabs/stairs)
+                        if (triY <= maxTopMeshAllowed && (y - triY) <= 2.35 && triY > meshHitY) {
                             meshHitY = triY;
                             foundTri = true;
                         }
@@ -1427,13 +1448,14 @@ class BuildingHeightmap {
 
                     if (foundTri) {
                         bestY = meshHitY;
-                        continue;
                     }
+                    // Never fall back to OBB maxY (parapets/antennas/stairwells) when exact 3D collision mesh exists!
+                    continue;
                 }
             }
 
             // 2. OBB top fallback (only when near the OBB top slab, never snapping interior floors UP to roof)
-            if (obbTop > maxTopAllowed || Math.abs(y - obbTop) > 1.35) continue;
+            if (obbTop > maxTopObbAllowed || Math.abs(y - obbTop) > 1.35) continue;
 
             const lzPoly = (dx * sinR - dz * cosR) / sz;
             const rawFp = obb.customPolygon || this._getFootprint(obb.name);
@@ -1451,6 +1473,278 @@ class BuildingHeightmap {
             }
         }
         return bestY;
+    }
+
+    /**
+     * Lazily extract and cache vertical/steep wall segments from a building's 3D collision mesh.
+     * Each entry is 8 floats: [ax, az, bx, bz, minY, maxY, nx, nz] in local mesh coordinates.
+     */
+    _getMeshWallSegments(mesh3d) {
+        if (!mesh3d || !mesh3d.v || !mesh3d.i) return null;
+        if (mesh3d._wallSegs !== undefined) return mesh3d._wallSegs;
+
+        const verts = mesh3d.v;
+        const indices = mesh3d.i;
+        const out = [];
+        const dedup = new Set();
+
+        for (let k = 0; k < indices.length; k += 3) {
+            const i0 = indices[k] * 3;
+            const i1 = indices[k + 1] * 3;
+            const i2 = indices[k + 2] * 3;
+
+            const x0 = verts[i0], y0 = verts[i0 + 1], z0 = verts[i0 + 2];
+            const x1 = verts[i1], y1 = verts[i1 + 1], z1 = verts[i1 + 2];
+            const x2 = verts[i2], y2 = verts[i2 + 1], z2 = verts[i2 + 2];
+
+            // Compute face normal (e1 x e2)
+            const e1x = x1 - x0, e1y = y1 - y0, e1z = z1 - z0;
+            const e2x = x2 - x0, e2y = y2 - y0, e2z = z2 - z0;
+            const nx = e1y * e2z - e1z * e2y;
+            const ny = e1z * e2x - e1x * e2z;
+            const nz = e1x * e2y - e1y * e2x;
+            const nLen = Math.hypot(nx, ny, nz);
+            if (nLen < 1e-4) continue;
+
+            // Keep steep/vertical wall triangles (|ny / nLen| < 0.55 => slope > ~57 deg)
+            if (Math.abs(ny) >= 0.55 * nLen) continue;
+
+            const hLen = Math.hypot(nx, nz);
+            if (hLen < 1e-4) continue;
+            const hnx = nx / hLen;
+            const hnz = nz / hLen;
+
+            // Longest horizontal edge in XZ represents the wall span
+            const d01 = (x1 - x0) * (x1 - x0) + (z1 - z0) * (z1 - z0);
+            const d12 = (x2 - x1) * (x2 - x1) + (z2 - z1) * (z2 - z1);
+            const d20 = (x0 - x2) * (x0 - x2) + (z0 - z2) * (z0 - z2);
+
+            let ax, az, bx, bz, bestD;
+            if (d01 >= d12 && d01 >= d20) {
+                ax = x0; az = z0; bx = x1; bz = z1; bestD = d01;
+            } else if (d12 >= d20) {
+                ax = x1; az = z1; bx = x2; bz = z2; bestD = d12;
+            } else {
+                ax = x2; az = z2; bx = x0; bz = z0; bestD = d20;
+            }
+            if (bestD < 0.0225) continue; // Skip tiny sliver edges (< 15cm)
+
+            const minY = Math.min(y0, y1, y2);
+            const maxY = Math.max(y0, y1, y2);
+            if (maxY - minY < 0.15) continue;
+
+            // Deduplicate the two coplanar triangles of the same wall quad
+            const qAx = Math.round(ax * 20), qAz = Math.round(az * 20);
+            const qBx = Math.round(bx * 20), qBz = Math.round(bz * 20);
+            const qMinY = Math.round(minY * 5), qMaxY = Math.round(maxY * 5);
+            const qNx = Math.round(hnx * 4), qNz = Math.round(hnz * 4);
+            const key = (qAx < qBx || (qAx === qBx && qAz <= qBz))
+                ? `${qAx},${qAz},${qBx},${qBz},${qMinY},${qMaxY},${qNx},${qNz}`
+                : `${qBx},${qBz},${qAx},${qAz},${qMinY},${qMaxY},${qNx},${qNz}`;
+            if (dedup.has(key)) continue;
+            dedup.add(key);
+
+            out.push(ax, az, bx, bz, minY, maxY, hnx, hnz);
+        }
+
+        mesh3d._wallSegs = out.length > 0 ? new Float32Array(out) : null;
+        return mesh3d._wallSegs;
+    }
+
+    /**
+     * Resolve horizontal wall clipping for a soldier at (x, floorY, z) using PR/BF2 physics rules:
+     * - Stand / Crouch: solid body cylinder (radius ~0.38m) cannot penetrate walls (at most edge of arm/elbow).
+     * - Prone: lateral flanks MUST stay outside walls (~0.38m), while longitudinal head/feet axis allows up to
+     *   half-body overlap (~0.14m core clearance) so center & opposite half stay outside.
+     * - Skips low stair risers (< 0.36m above floorY) so stairs never block upward/downward movement.
+     */
+    resolveSoldierWallCollision(rawX, floorY, rawZ, stance = "stand", rotDeg = 0, maxShift = 0.68) {
+        if (!this.initialized || !this.spatialGrid || this.spatialGrid.size === 0) {
+            return { x: rawX, z: rawZ, shifted: false };
+        }
+
+        const isProne = (stance === "prone");
+        const isCrouch = (stance === "crouch");
+        // Skip stair steps (< 0.36m in stand, < 0.30m in crouch) while catching real walls & parapets
+        const bodyMinY = floorY + (isProne ? 0.14 : (isCrouch ? 0.30 : 0.36));
+        const bodyMaxY = floorY + (isProne ? 0.52 : (isCrouch ? 1.05 : 1.55));
+        const standRadius = 0.38;
+
+        // Soldier lateral unit vector in world XZ (0 deg = North +Z, 90 deg = East +X)
+        const gameRad = (rotDeg || 0) * Math.PI / 180;
+        const latX = Math.cos(gameRad);
+        const latZ = -Math.sin(gameRad);
+
+        const sCell = this.spatialCellSize || 2;
+        const c0 = Math.floor(rawX / sCell);
+        const r0 = Math.floor(rawZ / sCell);
+
+        // Gather unique candidate non-vegetation OBBs in 3x3 cell neighborhood
+        const candidates = [];
+        const seen = new Set();
+        for (let dc = -1; dc <= 1; dc++) {
+            for (let dr = -1; dr <= 1; dr++) {
+                const list = this.spatialGrid.get((c0 + dc) + "," + (r0 + dr));
+                if (!list) continue;
+                for (let i = 0; i < list.length; i++) {
+                    const obb = list[i];
+                    if (!obb || obb.hidden || obb.ignoreLOS || obb.isVegetation) continue;
+                    if (seen.has(obb.id)) continue;
+                    seen.add(obb.id);
+                    if (obb.maxY != null && obb.maxY < bodyMinY) continue;
+                    if (obb.minY != null && obb.minY > bodyMaxY) continue;
+                    candidates.push(obb);
+                }
+            }
+        }
+        if (candidates.length === 0) {
+            return { x: rawX, z: rawZ, shifted: false };
+        }
+
+        let curX = rawX;
+        let curZ = rawZ;
+        let shifted = false;
+
+        for (let iter = 0; iter < 2; iter++) {
+            let accPushX = 0;
+            let accPushZ = 0;
+            let pushCount = 0;
+
+            for (let ci = 0; ci < candidates.length; ci++) {
+                const obb = candidates[ci];
+                const rad = -(obb.yaw || 0) * Math.PI / 180;
+                const cosR = Math.cos(rad), sinR = Math.sin(rad);
+                const sx = obb.scaleX || 1.0, sz = obb.scaleZ || 1.0;
+                const dx = curX - obb.x, dz = curZ - obb.z;
+                const lx = (dx * cosR + dz * sinR) / sx;
+
+                const mesh3d = obb.mesh3d;
+                if (mesh3d && mesh3d.i && mesh3d.i.length > 0 && Math.abs(obb.pitch || 0) <= 0.05 && Math.abs(obb.roll || 0) <= 0.05) {
+                    const lz = (-dx * sinR + dz * cosR) / sz;
+                    const b = mesh3d.b;
+                    if (b && (lx < b[0] - 0.55 || lx > b[3] + 0.55 || lz < b[2] - 0.55 || lz > b[5] + 0.55)) {
+                        continue;
+                    }
+                    const segs = this._getMeshWallSegments(mesh3d);
+                    if (!segs) continue;
+
+                    const obbY = obb.y || 0;
+                    const locMinY = bodyMinY - obbY;
+                    const locMaxY = bodyMaxY - obbY;
+
+                    for (let s = 0; s < segs.length; s += 8) {
+                        const sMinY = segs[s + 4];
+                        const sMaxY = segs[s + 5];
+                        if (sMaxY < locMinY || sMinY > locMaxY) continue;
+
+                        const ax = segs[s], az = segs[s + 1];
+                        const bx = segs[s + 2], bz = segs[s + 3];
+
+                        // Quick segment AABB reject
+                        const segMinX = (ax < bx ? ax : bx) - 0.45;
+                        const segMaxX = (ax > bx ? ax : bx) + 0.45;
+                        if (lx < segMinX || lx > segMaxX) continue;
+                        const segMinZ = (az < bz ? az : bz) - 0.45;
+                        const segMaxZ = (az > bz ? az : bz) + 0.45;
+                        if (lz < segMinZ || lz > segMaxZ) continue;
+
+                        const abx = bx - ax, abz = bz - az;
+                        const abLenSq = abx * abx + abz * abz;
+                        if (abLenSq < 1e-6) continue;
+                        let t = ((lx - ax) * abx + (lz - az) * abz) / abLenSq;
+                        if (t < 0) t = 0;
+                        else if (t > 1) t = 1;
+
+                        const qx = ax + t * abx;
+                        const qz = az + t * abz;
+                        const vx = lx - qx;
+                        const vz = lz - qz;
+                        const dist = Math.hypot(vx, vz);
+
+                        // Local normal -> world normal to evaluate prone lateral alignment & push direction
+                        const lnx = segs[s + 6], lnz = segs[s + 7];
+                        const wnx = lnx * cosR - lnz * sinR;
+                        const wnz = lnx * sinR + lnz * cosR;
+
+                        let rEff = standRadius;
+                        if (isProne) {
+                            const latAlign = Math.abs(wnx * latX + wnz * latZ);
+                            rEff = 0.14 + 0.24 * latAlign;
+                        }
+
+                        if (dist >= rEff) continue;
+
+                        const side = vx * lnx + vz * lnz;
+                        let plx = 0, plz = 0;
+                        if (dist > 1e-4 && side >= -0.05 * dist) {
+                            // On outward air side of wall: push straight away from wall segment
+                            const pen = rEff - dist;
+                            plx = (vx / dist) * pen;
+                            plz = (vz / dist) * pen;
+                        } else if (dist < 0.28) {
+                            // Slightly quantized behind wall face: push back out along outward face normal
+                            const pen = Math.min(maxShift, rEff + dist);
+                            plx = lnx * pen;
+                            plz = lnz * pen;
+                        } else {
+                            continue;
+                        }
+
+                        const wpx = (plx * sx) * cosR - (plz * sz) * sinR;
+                        const wpz = (plx * sx) * sinR + (plz * sz) * cosR;
+                        accPushX += wpx;
+                        accPushZ += wpz;
+                        pushCount++;
+                    }
+                } else {
+                    // 2D Footprint fallback when no 3D mesh exists for this static object
+                    const rawFp = obb.customPolygon || this._getFootprint(obb.name);
+                    const walls = (rawFp && rawFp.walls && rawFp.walls.length > 0) ? rawFp.walls : null;
+                    if (!walls) continue;
+                    const lzPoly = (dx * sinR - dz * cosR) / sz;
+                    for (let wi = 0; wi < walls.length; wi++) {
+                        const w = walls[wi];
+                        const ax = w[0], az = w[1], bx = w[2], bz = w[3];
+                        const abx = bx - ax, abz = bz - az;
+                        const abLenSq = abx * abx + abz * abz;
+                        if (abLenSq < 1e-6) continue;
+                        let t = ((lx - ax) * abx + (lzPoly - az) * abz) / abLenSq;
+                        if (t < 0) t = 0;
+                        else if (t > 1) t = 1;
+                        const vx = lx - (ax + t * abx);
+                        const vz = lzPoly - (az + t * abz);
+                        const dist = Math.hypot(vx, vz);
+                        if (dist < 1e-4 || dist >= standRadius) continue;
+                        const pen = (isProne ? 0.24 : standRadius) - dist;
+                        if (pen <= 0) continue;
+                        const plx = (vx / dist) * pen;
+                        const plz = (vz / dist) * pen;
+                        accPushX += (plx * sx) * cosR + (plz * sz) * sinR;
+                        accPushZ += (plx * sx) * sinR - (plz * sz) * cosR;
+                        pushCount++;
+                    }
+                }
+            }
+
+            if (pushCount === 0) break;
+            // Average when multiple adjacent wall segments overlap so corners resolve smoothly without overshoot
+            const scale = (pushCount > 1) ? (1.0 / Math.sqrt(pushCount)) : 1.0;
+            curX += accPushX * scale;
+            curZ += accPushZ * scale;
+            shifted = true;
+
+            // Clamp total displacement from raw demo coords so we never push a soldier through a thin wall
+            const totDx = curX - rawX;
+            const totDz = curZ - rawZ;
+            const totDist = Math.hypot(totDx, totDz);
+            if (totDist > maxShift) {
+                const clampK = maxShift / totDist;
+                curX = rawX + totDx * clampK;
+                curZ = rawZ + totDz * clampK;
+            }
+        }
+
+        return { x: curX, z: curZ, shifted };
     }
 }
 

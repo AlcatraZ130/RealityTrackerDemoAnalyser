@@ -42,6 +42,7 @@ var options_DrawKitIcons = true
 var options_DrawDOD = true
 var options_RealTerrain = true
 var options_TerrainDetail = true
+var options_3dRoads = false
 var options_DrawSkybox = true
 var options_3dFog = true
 var options_3dFogOnPlayer = false
@@ -52,9 +53,14 @@ var options_LodFade = true
 var options_TreeTextures = false
 var options_BushTextures = false
 var options_FactionTextures = false
+var options_PredictiveEquipment = true
 var options_3dShadows = false
 var options_3dAoSsao = false
 var options_3dSsaoQuality = 1 // 0=Fast (1/2 res), 1=Balanced (Full res, 12-tap), 2=High (Full res, 20-tap)
+var options_3dPrReflections = false // PR RaShaderBM specular + sky fresnel + terrain sun-slope relief
+var options_3dWind = false // PR RaShaderLeaf / Undergrowth vegetation wind sway
+var options_3dWeather = false // PR Rain.fx GPU-instanced weather particles (rain / snow / desert dust)
+var options_3dBloom = false // PR PostProduction_nv3x selective bloom + sun glare + subtle tone mapping
 var options_3dAntiAliasing = 1 // 0=Off, 1=FXAA, 2=MSAA 4x, 3=MSAA 4x + FXAA
 var options_ClampVehiclesToMap = true //Dont draw vehicles outside the map
 var options_DrawVehicleHeight = true
@@ -66,6 +72,7 @@ var options_DrawBuildingWireframes = false // Show real 2D vector footprints of 
 var options_Interpolation = true // Smooth interpolation between frames/ticks
 var options_VisionConeRespectsLOS = true // Dynamic visibility shadowcasting against walls and terrain
 var options_CameraTracking = false // Smoothly track selected player
+var options_FirstPersonView = false // 3D First-Person View from selected player or vehicle seat
 	//}
 
 
@@ -158,22 +165,68 @@ function update() {
 
 }
 
+function _getCurrentTickDurationSec()
+{
+	const fallbackDt = (typeof DetectedDemoHz !== "undefined" && DetectedDemoHz > 0)
+		? (1.0 / DetectedDemoHz)
+		: ((typeof DemoTimePerTick !== "undefined" && DemoTimePerTick > 0) ? DemoTimePerTick : 0.04);
+	if (typeof tickToTime !== "undefined" && tickToTime && tickToTime.length > 1 && typeof Tick_Current === "number") {
+		const idxCur = Math.max(1, Math.min(Tick_Current - 1, tickToTime.length - 1));
+		const dtExact = tickToTime[idxCur] - tickToTime[idxCur - 1];
+		if (dtExact > 0.005 && dtExact <= 2.5) {
+			return dtExact;
+		}
+	}
+	return fallbackDt;
+}
+
 function updateLogic(frameTime)
 {
 	if (!isPlaying)
 		return;
 
-	const dt = (typeof DetectedDemoHz !== "undefined" && DetectedDemoHz > 0) ? (1.0 / DetectedDemoHz) : (typeof DemoTimePerTick !== 'undefined' && DemoTimePerTick > 0 ? DemoTimePerTick : 0.04);
-	const ticksPassed = (frameTime / dt) * playSpeed;
-	interpolation_CurrentAmount += ticksPassed;
+	// Clamp wall-clock frameTime to prevent multi-tick lurches after tab-switch or GC stalls
+	const safeFrameTime = Math.min(0.1, Math.max(0.0, frameTime || 0.0));
+	let budgetSec = safeFrameTime * playSpeed;
+	let safetyIters = 0;
 
-	// while: for very fast speeds, skip drawing between updates.
-	while (interpolation_CurrentAmount >= 1.0)
+	// Advance playback in EXACT real game seconds across variable-duration server ticks (0.28s / 0.32s / 0.36s ...)
+	// Guarantees d(curTime)/d(wallTime) === playSpeed identically with zero tick-boundary slowdowns or hitches!
+	while (budgetSec > 0 && safetyIters < 64)
 	{
-		if (!Update()) // If update returned false, don't touch anything anymore.
-			return
-		
-		interpolation_CurrentAmount--;
+		safetyIters++;
+		const curTickDt = _getCurrentTickDurationSec();
+		const remInTickSec = Math.max(0.0, (1.0 - interpolation_CurrentAmount) * curTickDt);
+
+		if (budgetSec < remInTickSec)
+		{
+			interpolation_CurrentAmount += budgetSec / curTickDt;
+			budgetSec = 0;
+			break;
+		}
+
+		budgetSec -= remInTickSec;
+		if (!Update()) // If update returned false, loop if Debug Lab continuous mechanics mode is active!
+		{
+			if (window.debugLabState && window.debugLabState.active && window.debugLabState.mode === "mechanics" && window.debugLabState.autoLoop !== false) {
+				const loopTick = window.debugLabState.loopStartTick || 30;
+				goTo(loopTick);
+				interpolation_CurrentAmount = 0.0;
+				isPlaying = true;
+				onResume();
+				break;
+			}
+			return;
+		}
+
+		interpolation_CurrentAmount = 0.0;
+
+		if (window.debugLabState && window.debugLabState.active && window.debugLabState.mode === "mechanics" && window.debugLabState.autoLoop !== false && Tick_Count > 60 && Tick_Current >= Tick_Count - 3) {
+			const loopTick = window.debugLabState.loopStartTick || 30;
+			goTo(loopTick);
+			interpolation_CurrentAmount = 0.0;
+			break;
+		}
 
 		if (window._killReplayStopTick != null && Tick_Current >= window._killReplayStopTick) {
 			interpolation_CurrentAmount = 0;
@@ -231,6 +284,15 @@ function onPlaySpeedChange()
 	var speed = Math.pow(rangevalue, 2.5)
 
 	setSpeed(speed)
+}
+
+function togglePlaySpeedMenu(ev)
+{
+	if (ev && typeof ev.stopPropagation === "function") ev.stopPropagation();
+	const wrap = document.getElementById("controlBarOptions");
+	if (wrap) {
+		wrap.classList.toggle("speed-open");
+	}
 }
 
 function setDirectPlaySpeed(speedVal)
@@ -291,7 +353,7 @@ function onKeyDown(e)
 	// If a <select> dropdown still holds focus when pressing camera/nav keys, release focus automatically
 	if (e.target && e.target.tagName === "SELECT") {
 		const k = e.which;
-		if (k === 87 || k === 65 || k === 83 || k === 68 || k === 81 || k === 69 || k === 16 || k === 86 || k === 71 || k === 32 || k === 27) {
+		if (k === 87 || k === 65 || k === 83 || k === 68 || k === 81 || k === 69 || k === 16 || k === 86 || k === 71 || k === 70 || k === 219 || k === 221 || k === 32 || k === 27) {
 			e.target.blur();
 		} else {
 			return;
@@ -349,6 +411,31 @@ function onKeyDown(e)
 		//case 68: //d
 		//	toggleSubMenu("vehicleDestroyers")
 		//	break;
+		case 70: // f
+			if (typeof toggleFirstPersonView === "function") {
+				toggleFirstPersonView();
+			}
+			break;
+		case 219: // [
+			if ((typeof options_FirstPersonView !== "undefined" && options_FirstPersonView) ||
+				(typeof SelectedVehicle !== "undefined" && SelectedVehicle != SELECTED_NOTHING)) {
+				if (typeof cycleSelectedVehiclePassenger === "function") {
+					cycleSelectedVehiclePassenger(-1);
+				}
+			} else {
+				return;
+			}
+			break;
+		case 221: // ]
+			if ((typeof options_FirstPersonView !== "undefined" && options_FirstPersonView) ||
+				(typeof SelectedVehicle !== "undefined" && SelectedVehicle != SELECTED_NOTHING)) {
+				if (typeof cycleSelectedVehiclePassenger === "function") {
+					cycleSelectedVehiclePassenger(1);
+				}
+			} else {
+				return;
+			}
+			break;
 		case 71: //g
 			toggle3dMode()
 			break
@@ -416,7 +503,7 @@ window.addEventListener("blur", () => {
 function updateHeader()
 {
 	if (GameMode == "gpm_insurgency")
-		$("#headerInner")[0].innerHTML = tickets2 + " (" + intel +") - " + tickets1 + " " + getTimeStringOfTick(Tick_Current) + " x" + playSpeed.toFixed(1)
+		$("#headerInner")[0].innerHTML = tickets2 + " (Intel: " + intel + ") - Caches: " + tickets1 + " " + getTimeStringOfTick(Tick_Current) + " x" + playSpeed.toFixed(1)
 	else
 		$("#headerInner")[0].innerHTML = tickets2 + " - " + tickets1 + " " + getTimeStringOfTick(Tick_Current) + " x" + playSpeed.toFixed(1)
 }
@@ -538,9 +625,15 @@ function updateLodDistanceLabel() {
 // Called when an options checkbox is clicked.
 function changeSetting(settingName, val)
 {
+	if (settingName === "options_FirstPersonView") {
+		if (typeof toggleFirstPersonView === "function") {
+			toggleFirstPersonView(!!val);
+		}
+		return;
+	}
 	window[settingName] = val;
 	try {
-		if (typeof localStorage !== "undefined" && settingName !== "options_DrawBuildingWireframes" && settingName !== "options_CameraTracking") {
+		if (typeof localStorage !== "undefined" && settingName !== "options_DrawBuildingWireframes" && settingName !== "options_CameraTracking" && settingName !== "options_FirstPersonView") {
 			localStorage.setItem(settingName, JSON.stringify(val));
 		}
 	} catch (e) {}
@@ -766,13 +859,31 @@ function updateViewportModeButton() {
 	}
 }
 
-function toggle3dMode() {
+function showAnalyserToast(msg) {
+	showViewportModeToast(msg);
+}
+
+function setViewportMode(targetMode, showToast = true) {
 	const hudCanvas = document.getElementById("map3dHud");
 	const t = getHudI18n();
-	
-	// Cycle: 0 (2D Canvas) -> 1 (3D Free Camera) -> 2 (3D Top-Down) -> 0 (2D Canvas)
-	viewportMode = (viewportMode + 1) % 3;
+	const nextMode = ((parseInt(targetMode, 10) || 0) % 3 + 3) % 3;
+
+	viewportMode = nextMode;
 	is3DMode = (viewportMode !== VIEWPORT_2D);
+
+	if (viewportMode !== VIEWPORT_3D_FREE && typeof options_FirstPersonView !== "undefined" && options_FirstPersonView) {
+		options_FirstPersonView = false;
+		const fpvChk = document.getElementById("options_FirstPersonView");
+		if (fpvChk) fpvChk.checked = false;
+		if (typeof renderer3d !== "undefined" && renderer3d) {
+			renderer3d._fpvViewQuat = null;
+			renderer3d._fpvActiveState = null;
+			renderer3d._fpvInitialized = false;
+		}
+		if (typeof selection_UpdateInformationBox === "function") {
+			selection_UpdateInformationBox();
+		}
+	}
 
 	const isRec = (typeof clipRecorder !== 'undefined' && clipRecorder.isRecording);
 
@@ -785,7 +896,7 @@ function toggle3dMode() {
 		$("#map")[0].style.zIndex = "";
 		$("#map3d")[0].style.display = "none";
 		if (hudCanvas) hudCanvas.style.display = "none";
-		showViewportModeToast((t && t.mode2dToast) || "2D Map");
+		if (showToast) showViewportModeToast((t && t.mode2dToast) || "2D Map");
 		updateViewportModeButton();
 		requestUpdate();
 	} else if (viewportMode === VIEWPORT_3D_FREE) {
@@ -795,7 +906,7 @@ function toggle3dMode() {
 				viewportMode = VIEWPORT_2D;
 				is3DMode = false;
 				updateViewportModeButton();
-				return;
+				return false;
 			}
 		}
 		activeRenderer = renderer3d;
@@ -810,7 +921,7 @@ function toggle3dMode() {
 		}
 		$("#map3d")[0].style.display = "block";
 		if (hudCanvas) hudCanvas.style.display = "block";
-		showViewportModeToast((t && t.mode3dFreeToast) || "3D Free Camera");
+		if (showToast) showViewportModeToast((t && t.mode3dFreeToast) || "3D Free Camera");
 		updateViewportModeButton();
 		renderer3d.draw();
 	} else if (viewportMode === VIEWPORT_3D_TOPDOWN) {
@@ -820,7 +931,7 @@ function toggle3dMode() {
 				viewportMode = VIEWPORT_2D;
 				is3DMode = false;
 				updateViewportModeButton();
-				return;
+				return false;
 			}
 		}
 		activeRenderer = renderer3d;
@@ -835,10 +946,87 @@ function toggle3dMode() {
 		}
 		$("#map3d")[0].style.display = "block";
 		if (hudCanvas) hudCanvas.style.display = "block";
-		showViewportModeToast((t && t.mode3dTopToast) || "3D Top-Down");
+		if (showToast) showViewportModeToast((t && t.mode3dTopToast) || "3D Top-Down");
 		updateViewportModeButton();
 		renderer3d.draw();
 	}
+	return true;
+}
+
+function toggle3dMode() {
+	// Cycle: 0 (2D Canvas) -> 1 (3D Free Camera) -> 2 (3D Top-Down) -> 0 (2D Canvas)
+	setViewportMode((viewportMode + 1) % 3, true);
+}
+
+function toggleFirstPersonView(forceState = null) {
+	const nextState = (forceState !== null) ? !!forceState : !options_FirstPersonView;
+	const chk = document.getElementById("options_FirstPersonView");
+
+	if (nextState) {
+		const hasPlayer = (typeof SelectedPlayer !== "undefined" && SelectedPlayer != SELECTED_NOTHING && typeof AllPlayers !== "undefined" && !!AllPlayers[SelectedPlayer]);
+		const hasVehicle = (typeof SelectedVehicle !== "undefined" && SelectedVehicle != SELECTED_NOTHING && typeof AllVehicles !== "undefined" && !!AllVehicles[SelectedVehicle]);
+
+		if (!hasPlayer && hasVehicle) {
+			const veh = AllVehicles[SelectedVehicle];
+			if (veh && veh.Passengers && typeof veh.Passengers.forEach === "function" && typeof AllPlayers !== "undefined") {
+				let slot0 = null;
+				let slot1 = null;
+				let firstAlive = null;
+				veh.Passengers.forEach((pid) => {
+					const cp = AllPlayers[pid];
+					if (!cp || cp.isJoining || !cp.isAlive) return;
+					if (!firstAlive) firstAlive = cp;
+					if (cp.vehicleSlot === 0 && !slot0) slot0 = cp;
+					else if (cp.vehicleSlot === 1 && !slot1) slot1 = cp;
+				});
+				const primary = slot0 || slot1 || firstAlive;
+				if (primary && typeof selection_SelectPlayer === "function") {
+					selection_SelectPlayer(primary.id, false);
+				}
+			}
+		}
+
+		const validPlayer = (typeof SelectedPlayer !== "undefined" && SelectedPlayer != SELECTED_NOTHING && typeof AllPlayers !== "undefined" && !!AllPlayers[SelectedPlayer]);
+		const validVehicle = (typeof SelectedVehicle !== "undefined" && SelectedVehicle != SELECTED_NOTHING && typeof AllVehicles !== "undefined" && !!AllVehicles[SelectedVehicle]);
+
+		if (!validPlayer && !validVehicle) {
+			options_FirstPersonView = false;
+			if (chk) chk.checked = false;
+			const t = getHudI18n();
+			showAnalyserToast((t && t.fpvNoTargetToast) || "Select a player or vehicle first for 1PV");
+			if (typeof selection_UpdateInformationBox === "function") selection_UpdateInformationBox();
+			return false;
+		}
+
+		if (viewportMode !== VIEWPORT_3D_FREE) {
+			if (!setViewportMode(VIEWPORT_3D_FREE, false)) {
+				options_FirstPersonView = false;
+				if (chk) chk.checked = false;
+				return false;
+			}
+		}
+	}
+
+	options_FirstPersonView = nextState;
+	if (chk) chk.checked = options_FirstPersonView;
+
+	if (typeof renderer3d !== "undefined" && renderer3d) {
+		renderer3d.fpvYawOffset = 0;
+		renderer3d.fpvPitch = 0;
+		renderer3d._fpvInitialized = false;
+		if (!options_FirstPersonView) {
+			renderer3d._fpvViewQuat = null;
+			renderer3d._fpvActiveState = null;
+		}
+	}
+
+	if (typeof selection_UpdateInformationBox === "function") {
+		selection_UpdateInformationBox();
+	}
+	if (typeof requestUpdate === "function") {
+		requestUpdate();
+	}
+	return options_FirstPersonView;
 }
 $(() => {
 	activeRenderer = renderer2d;

@@ -25,6 +25,7 @@ var SKY_DB = {
       0.1395
     ],
     "viewDist": 650.0,
+    "weather": "blizzard",
     "layers": {
       "gpm_cq:64": {
         "sky": "nuijamaa_night_sky",
@@ -597,7 +598,8 @@ var SKY_DB = {
           0.8111,
           0.3605
         ],
-        "viewDist": 500.0
+        "viewDist": 500.0,
+        "weather": "rain"
       },
       "gpm_cq:16": {
         "sky": "dustsky01",
@@ -1054,6 +1056,7 @@ var SKY_DB = {
       -0.5886
     ],
     "viewDist": 500.0,
+    "weather": "snow",
     "layers": {
       "gpm_cq:16": {
         "sky": "dovre_blizzard",
@@ -1073,7 +1076,8 @@ var SKY_DB = {
           0.8824,
           0.8824
         ],
-        "viewDist": 300.0
+        "viewDist": 300.0,
+        "weather": "blizzard"
       },
       "gpm_cq:32": {
         "sky": "dovre_blizzard",
@@ -1093,7 +1097,8 @@ var SKY_DB = {
           0.8824,
           0.8824
         ],
-        "viewDist": 300.0
+        "viewDist": 300.0,
+        "weather": "blizzard"
       },
       "gpm_skirmish:16": {
         "sky": "dovre_blizzard",
@@ -1113,7 +1118,8 @@ var SKY_DB = {
           0.8824,
           0.8824
         ],
-        "viewDist": 300.0
+        "viewDist": 300.0,
+        "weather": "blizzard"
       }
     }
   },
@@ -1538,6 +1544,7 @@ var SKY_DB = {
       0.9465
     ],
     "viewDist": 1400.0,
+    "weather": "snow",
     "layers": {
       "gpm_coop:64": {
         "sky": "frostbite_highfog",
@@ -2589,7 +2596,8 @@ var SKY_DB = {
           0.6549,
           0.7137,
           0.8078
-        ]
+        ],
+        "weather": "rain"
       },
       "gpm_coop:32": {
         "sky": "jj_sky_dawn03",
@@ -2627,7 +2635,8 @@ var SKY_DB = {
           0.6549,
           0.7137,
           0.8078
-        ]
+        ],
+        "weather": "rain"
       },
       "gpm_cq:16": {
         "fogParams": [
@@ -3122,7 +3131,8 @@ var SKY_DB = {
           0.3647,
           0.3882
         ],
-        "viewDist": 625.0
+        "viewDist": 625.0,
+        "weather": "rain"
       },
       "gpm_insurgency:64": {
         "sky": "xiangshan_sky_thunder",
@@ -3142,7 +3152,8 @@ var SKY_DB = {
           0.3647,
           0.3882
         ],
-        "viewDist": 625.0
+        "viewDist": 625.0,
+        "weather": "rain"
       },
       "gpm_skirmish:16": {
         "sky": "xiangshan_sky_thunder",
@@ -3162,7 +3173,8 @@ var SKY_DB = {
           0.3647,
           0.3882
         ],
-        "viewDist": 625.0
+        "viewDist": 625.0,
+        "weather": "rain"
       }
     }
   },
@@ -3413,7 +3425,8 @@ var SKY_DB = {
       0.9088,
       0.3096
     ],
-    "viewDist": 500.0
+    "viewDist": 500.0,
+    "weather": "rain"
   },
   "shipment": {
     "sky": "kashan_sky02",
@@ -3589,6 +3602,7 @@ var SKY_DB = {
       0.5494
     ],
     "viewDist": 200.0,
+    "weather": "snow",
     "layers": {
       "gpm_skirmish:64": {
         "sky": "stalingradsky",
@@ -4202,7 +4216,8 @@ var SKY_DB = {
       0.6824,
       -0.5118
     ],
-    "viewDist": 700.0
+    "viewDist": 700.0,
+    "weather": "snow"
   },
   "zakho": {
     "sky": "black_gold_sky02",

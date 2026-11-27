@@ -89,24 +89,36 @@ class Water3dRenderer extends Initializable {
             uniform sampler2D uDodSampler;
             uniform int uUseDodOverlay;
 
-            // Lightweight procedural dual-octave ripple normal (zero texture reads)
+            // Domain-warped 6-wave irrational-frequency ripple normal (zero texture reads, non-repeating)
             vec3 calcWaveNormal(vec2 p, float t, float strength) {
                 if (strength <= 0.001) return vec3(0.0, 1.0, 0.0);
-                // Wave 1 & 2 (medium gentle swells)
-                float a1 = p.x * 0.190233 + p.y * 0.13 + t * 0.75;
-                float a2 = -p.x * 0.14 + p.y * 0.23 - t * 0.62;
-                // Wave 3 & 4 (fine ripples)
-                float a3 = p.x * 0.530609 - p.y * 0.41 + t * 1.15;
-                float a4 = p.x * 0.37 + p.y * 0.67 - t * 0.95;
+                // Slow large-scale domain warp breaks up periodic grid patterns at medium/high altitude
+                vec2 warp = vec2(
+                    sin(p.x * 0.031 + p.y * 0.047 + t * 0.23) * 2.4 + cos(p.y * 0.019 - t * 0.17) * 1.8,
+                    cos(p.x * 0.043 - p.y * 0.029 - t * 0.19) * 2.4 + sin(p.x * 0.021 + t * 0.15) * 1.8
+                );
+                vec2 pw = p + warp;
 
-                float dx = cos(a1) * 0.190233 * 0.38
-                         - cos(a2) * 0.14 * 0.34
-                         + cos(a3) * 0.530609 * 0.11
-                         + cos(a4) * 0.37 * 0.09;
-                float dz = cos(a1) * 0.13 * 0.38
-                         + cos(a2) * 0.23 * 0.34
-                         - cos(a3) * 0.41 * 0.11
-                         + cos(a4) * 0.67 * 0.09;
+                // 6 directional swells & ripples with mutually irrational frequencies/angles
+                float a1 = pw.x * 0.1731 + pw.y * 0.1297 + t * 0.72;
+                float a2 = -pw.x * 0.1387 + pw.y * 0.2193 - t * 0.59;
+                float a3 = pw.x * 0.3119 - pw.y * 0.2741 + t * 0.91;
+                float a4 = pw.x * 0.4873 + pw.y * 0.3821 - t * 1.13;
+                float a5 = -pw.x * 0.6317 + pw.y * 0.5179 + t * 1.37;
+                float a6 = pw.x * 0.2413 + pw.y * 0.7619 - t * 1.05;
+
+                float dx = cos(a1) * 0.1731 * 0.34
+                         - cos(a2) * 0.1387 * 0.30
+                         + cos(a3) * 0.3119 * 0.17
+                         + cos(a4) * 0.4873 * 0.10
+                         - cos(a5) * 0.6317 * 0.06
+                         + cos(a6) * 0.2413 * 0.07;
+                float dz = cos(a1) * 0.1297 * 0.34
+                         + cos(a2) * 0.2193 * 0.30
+                         - cos(a3) * 0.2741 * 0.17
+                         + cos(a4) * 0.3821 * 0.10
+                         + cos(a5) * 0.5179 * 0.06
+                         + cos(a6) * 0.7619 * 0.07;
 
                 return normalize(vec3(-dx * strength, 1.0, -dz * strength));
             }
@@ -155,10 +167,12 @@ class Water3dRenderer extends Initializable {
                 vec3 skyRefl = mix(uWaterColor * 0.85, uSkyColor, 0.72);
                 vec3 col = mix(waterBody, skyRefl, fresnel * shoreCalm);
 
-                // Gentle sun-aligned diffuse & specular shimmer
+                // Gentle sun-aligned diffuse & specular shimmer (distance specular-AA widens highlight smoothly)
                 vec3 L = normalize(uSunDir);
                 vec3 H = normalize(L + V);
-                float spec = pow(max(dot(N, H), 0.0), 88.876) * 0.42 * sunScale * distFade * shoreCalm;
+                float specExp = mix(88.0, 26.0, smoothstep(80.0, 750.0, camDist));
+                float specGain = mix(0.42, 0.20, smoothstep(80.0, 750.0, camDist));
+                float spec = pow(max(dot(N, H), 0.0), specExp) * specGain * sunScale * distFade * shoreCalm;
                 if (uIsTopDown == 1) spec *= 0.25;
                 col += vec3(1.0, 0.97, 0.90) * spec;
 

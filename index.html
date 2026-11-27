@@ -16,19 +16,21 @@
 	<script src="js/utils/initializable.js"></script>
 	<script src="js/utils/downloadmanager.js"></script>
 	<script src="js/animations.js"></script>
-	<script src="js/canvas.js?v=2.9_svg_dep_icons"></script>
+	<script src="js/canvas.js?v=3.0_orders_angle_fix"></script>
 	<script src="js/maprenderer.js"></script>
 	<script src="js/atlas.js"></script>
 	<script src="js/bookmark.js"></script>
 	<script src="js/events.js"></script>
-	<script src="js/selection.js?v=2.2_hash_always"></script>
-	<script src="js/scoreboard.js"></script>
-	<script src="js/vehicletables.js"></script>
-	<script src="js/loading.js?v=3.5_svg_dep_fix"></script>
-	<script src="js/main.js?v=4.6_lod_verylow"></script>
+	<script src="js/selection.js?v=2.4_1pv_crew_fix"></script>
+	<script src="js/scoreboard.js?v=1.1_1pv_crew_fix"></script>
+	<script src="js/vehicletables.js?v=1.1_1pv_crew_fix"></script>
+	<script src="js/loading.js?v=4.0_debug_lab"></script>
+	<script src="js/main.js?v=5.4_roads3d"></script>
 	<script src="js/serverinfo.js"></script>
 	<script src="js/draggingandzoom.js?v=3.4_zoom_3deg"></script>
-	<script src="js/parser.js?v=3.7_svg_dep_icons"></script>
+	<script src="js/3d/map_camo_db.js?v=1.1"></script>
+	<script src="js/3d/soldier_loadout_db.js?v=1.2_helmet_fix"></script>
+	<script src="js/parser.js?v=4.6_pred_clean"></script>
 	<script src="js/protocol.js"></script>
 	<script src="js/killlines.js"></script>
 	<script src="js/helperfunctions.js"></script>
@@ -37,10 +39,10 @@
 	<!-- Footprint vector databases (86 maps, 2692 silhouettes) -->
 	<script src="js/map_statics_db.js?v=pr_upd_audit_fixes"></script>
 	<script src="js/mesh_2d_footprints.js?v=2.6_audit_fixes"></script>
-	<script src="js/buildingheightmap.js?v=3.5_vstart_fix"></script>
+	<script src="js/buildingheightmap.js?v=3.8_debug_clean"></script>
 	<script src="js/ordershistory.js"></script>
 	<script src="js/playerhistory.js"></script>
-	<script src="js/demoanalyser.js?v=4.9.2"></script>
+	<script src="js/demoanalyser.js?v=4.9.9_roads3d"></script>
 	<script src="js/flankchrono.js?v=2.0_tactical_hud"></script>
 	<script src="js/analysertimeline.js?v=2.7_playhead_sync"></script>
 	<script src="js/analyserpreload.js?v=2.1_tick_align"></script>
@@ -49,27 +51,34 @@
 	<script src="js/zlib_inflate.js"></script>
 	<script src="js/3d/gl-matrix.js"></script>
 	<script src="js/3d/heightmap.js?v=2.0_bilinear_fix"></script>
-	<script src="js/3d/sky_db.js?v=1.3_fog_layers"></script>
+	<script src="js/3d/sky_db.js?v=1.4_weather"></script>
 	<script src="js/3d/skybox.js?v=1.4"></script>
 	<script src="js/3d/terrain_detail_db.js?v=pr_upd_phase2"></script>
-	<script src="js/3d/terrain.js?v=2.9"></script>
+	<script src="js/3d/terrain.js?v=3.1_pr_shaders"></script>
+	<script src="js/3d/roads_db.js?v=1.0"></script>
+	<script src="js/3d/roads3d.js?v=1.1_uv_fix"></script>
 	<script src="js/3d/foliage_volumes.js?v=1.4"></script>
-	<script src="js/3d/buildings3d.js?v=13.9"></script>
+	<script src="js/3d/buildings3d.js?v=14.1_tree_cull_fix"></script>
 	<script src="js/3d/geometry2d.js"></script>
 	<script src="js/3d/geometry.js"></script>
 	<script src="js/3d/pr_maps_database.js?v=pr_upd_1794574015"></script>
 	<script src="js/3d/pr_water_database.js?v=pr_upd_1794574015"></script>
-	<script src="js/3d/vehicle_dictionary.js?v=3.3_deployables_bipods"></script>
-	<script src="js/3d/entities3d.js?v=17.3_proj_meshes"></script>
-	<script src="js/3d/water3d.js?v=1.2"></script>
-	<script src="js/3d/lines3d.js?v=10.7_smoke3d_handover"></script>
-	<script src="js/3d/smoke3d.js?v=1.2_post_ssao_dense"></script>
-	<script src="js/3d/renderer3d.js?v=9.1_smoke_post_ssao"></script>
-	<script src="js/3d/hud3d.js?v=3.9_fob_toggle"></script>
+	<script src="js/3d/vehicle_dictionary.js?v=3.4_tripods_uav"></script>
+	<script src="js/3d/vehicle_seats_db.js?v=1.0"></script>
+	<script src="js/3d/jet_afterburners_db.js?v=1.0"></script>
+	<script src="js/3d/debug_catalog_db.js?v=1.2_all_dep"></script>
+	<script src="js/3d/entities3d.js?v=20.4_pr_exact"></script>
+	<script src="js/3d/water3d.js?v=1.3_warp"></script>
+	<script src="js/3d/lines3d.js?v=11.1_smooth_air"></script>
+	<script src="js/3d/smoke3d.js?v=1.5_grounded"></script>
+	<script src="js/3d/weather3d.js?v=1.1_exact_layers"></script>
+	<script src="js/3d/renderer3d.js?v=9.11_roads3d"></script>
+	<script src="js/3d/hud3d.js?v=4.3_debug_lab"></script>
+	<script src="js/debug_lab.js?v=1.6_all_maps"></script>
 	<script>if (window.module) module = window.module;</script>
 	<!-- <script src="js/init_prt.js"></script> -->
 	<link href="https://fonts.googleapis.com/css?family=Open+Sans|Roboto" rel="stylesheet">
-	<link rel="stylesheet" type="text/css" href="style.css?v=3.6_playhead_2px">
+	<link rel="stylesheet" type="text/css" href="style.css?v=4.0_speed_toggle">
 </head>
 	<body>
 		<div id="downloads">
@@ -419,6 +428,7 @@
 						<div id="depTerrainDetail" class="hud-dep-branch">
 							<label class="hud-option-row" title="Requires Terrain Textures. Adds close-range high-res ground detail."><input type="checkbox" checked="" id="options_TerrainDetail" onclick="checkboxClicked(this)"><span class="hud-opt-label">Ground Detail Textures</span></label>
 						</div>
+						<label class="hud-option-row" title="Renders authentic Project Reality compiled 3D roads, highways, and dirt paths hugging the terrain (81 maps)."><input type="checkbox" id="options_3dRoads" onclick="checkboxClicked(this)"><span class="hud-opt-label">Roads &amp; Paths</span></label>
 						<label class="hud-option-row" title="Renders the map and layer's authentic atmospheric sky dome (day, night, overcast, or storm) blended with horizon fog."><input type="checkbox" checked="" id="options_DrawSkybox" onclick="checkboxClicked(this)"><span class="hud-opt-label">Sky Dome</span></label>
 						<label class="hud-option-row" title="Applies Project Reality distance fog matching each map and layer preset."><input type="checkbox" checked="" id="options_3dFog" onclick="checkboxClicked(this)"><span class="hud-opt-label">Fog</span></label>
 						<div id="depFogPlayerGroup" class="hud-dep-branch">
@@ -455,6 +465,14 @@
 								</div>
 							</div>
 						</div>
+						<label class="hud-option-row" title="Adds Project Reality specular highlights, sky Fresnel rim reflections on vehicles &amp; structures, and directional sun-slope relief on terrain."><input type="checkbox" id="options_3dPrReflections" onclick="checkboxClicked(this)"><span class="hud-opt-label">PR Reflections &amp; Relief</span></label>
+
+						<div id="lblSec3DEnvironment" class="hud-section-title">Environment &amp; Effects</div>
+						<label class="hud-option-row" title="Animates gentle wind sway on tree canopies and bushes (PR RaShaderLeaf / Undergrowth)."><input type="checkbox" id="options_3dWind" onclick="checkboxClicked(this)"><span class="hud-opt-label">Vegetation Wind</span></label>
+						<label class="hud-option-row" title="Renders authentic PR rain, snow, or blizzard particles ONLY on the exact maps and layers that have precipitation in Project Reality."><input type="checkbox" id="options_3dWeather" onclick="checkboxClicked(this)"><span class="hud-opt-label">Weather Effects (Rain / Snow)</span></label>
+
+						<div id="lblSec3DPostProcess" class="hud-section-title">Post-Processing</div>
+						<label class="hud-option-row" title="Adds PR-style selective bloom on afterburners, explosions &amp; bright highlights, atmospheric sun glare, and subtle filmic tone mapping."><input type="checkbox" id="options_3dBloom" onclick="checkboxClicked(this)"><span class="hud-opt-label">Bloom &amp; Sun Glare</span></label>
 						<div class="hud-option-between" style="gap: 8px; padding: 3px 0 1px 0;" id="rowAntiAliasing" title="Smooths jagged 3D edges. Ordered from highest performance to highest quality.">
 							<span id="lblAATitle" class="hud-opt-label" style="font-size: 11.5px;">Anti-Aliasing</span>
 							<select id="options_3dAntiAliasing" onchange="set3dAntiAliasing(this.value); this.blur();" style="background: rgba(16, 26, 25, 0.92); color: #e2e8e7; border: 1px solid #3c5452; border-radius: 3px; font-size: 10.5px; padding: 1px 4px; cursor: pointer;">
@@ -558,6 +576,7 @@
 
 							<div id="lblSecTacCam" class="hud-section-title">Camera &amp; Visibility</div>
 							<label class="hud-option-row" title="Smoothly follows the selected player or vehicle with the camera in 2D and 3D. Press 'T' to toggle."><input type="checkbox" id="options_CameraTracking" onclick="checkboxClicked(this)"><span class="hud-opt-label">Follow Selected [T]</span></label>
+							<label class="hud-option-row" title="Switches to 3D First-Person View from the selected soldier's eyes or vehicle seat. Press 'F' to toggle, '[' / ']' to cycle crew."><input type="checkbox" id="options_FirstPersonView" onclick="checkboxClicked(this)"><span class="hud-opt-label">First-Person View [F]</span> <span class="hud-note-tag">(3D)</span></label>
 							<label class="hud-option-row" title="Shows occluded parts of soldiers, vehicles, deployables, and FOBs as team-colored silhouettes through walls and terrain in 3D."><input type="checkbox" id="options_Wallhack" onclick="checkboxClicked(this)"><span class="hud-opt-label">X-Ray Units</span> <span class="hud-note-tag">(3D)</span></label>
 						</div>
 
@@ -677,7 +696,7 @@
 						<div class="tlScrubberRight">
 							<div id="addBookmarkButton" class="cursorPointer" title="Add Bookmark" onclick='$("#addbookmarkComment").dialog("open")'>&#x2730;</div>
 							<div id="controlBarOptions">
-								<svg x="0px" y="0px" width="24px" height="24px" viewBox="0 0 40 40" enable-background="new 0 0 40 40" xml:space="preserve">
+								<svg id="playSpeedToggleBtn" class="cursorPointer" onclick="togglePlaySpeedMenu(event)" title="Playback Speed" x="0px" y="0px" width="24px" height="24px" viewBox="0 0 40 40" enable-background="new 0 0 40 40" xml:space="preserve">
 									<path transform="matrix(0.8101235312460657 0.5862592123978987 -0.5862592123978987 0.8101235312460657 29.975031174922556 11.636442661048283)" stroke-width="1" stroke-miterlimit="3" stroke="#000000" fill="#fff" d="M0,0 L-5.76,5.77 L-5.76,19.22 L0,19.22 L0,0 Z " />
 									<path transform="matrix(0.9957592516932394 -0.09199735141469921 0.09199735141469921 0.9957592516932394 8.878225575584047 31.373540173431767)" stroke-width="1.95" stroke-miterlimit="3" stroke="#000000" fill="#fff" d="M0,0 L8.97,-9.77 " />
 									<path transform="matrix(0.830062596210468 -0.5576702308464527 0.5576702308464527 0.830062596210468 1.1985338022710756 31.135220023443903)" stroke-width="2" stroke-miterlimit="3" stroke="#000000" fill="#fff" d="M0,0 L7.10,4.54 " />
@@ -692,7 +711,7 @@
 									<path transform="matrix(1 0 0 1 11.33412042502955 15.631641086186534)" stroke-miterlimit="3" stroke="#fff" fill="#fff" d="M0,0 L-8.50,0 " />
 									<path transform="matrix(1 0 0 1 11.381345926800485 19.64580873671782)" stroke-width="1.05" stroke-miterlimit="3" stroke="#fff" fill="#000000" d="M0,0 L-8.64,0.05 " />
 								</svg>
-								<label id="playSpeedLabel">
+								<label id="playSpeedLabel" onclick="event.stopPropagation()">
 									<div id="playSpeedPresets">
 										<button type="button" class="tlBtn" onclick="setDirectPlaySpeed(8)">8x</button>
 										<button type="button" class="tlBtn" onclick="setDirectPlaySpeed(4)">4x</button>

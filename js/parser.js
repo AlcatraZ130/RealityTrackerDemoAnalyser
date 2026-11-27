@@ -101,7 +101,7 @@ function message_Tick(FullMessage)
 {
 	if (InitialParse)
 	{
-		_timeCounter += FullMessage.getInt8(1) * TIMESTEP
+		_timeCounter += FullMessage.getUint8(1) * TIMESTEP
 		tickToTime.push(_timeCounter)
 	}
 }
@@ -200,12 +200,22 @@ class InterpolatedGameObject extends GameObject
 				? tickToTime[Tick_Current]
 				: (typeof Tick_Current !== "undefined" ? Tick_Current * (typeof DemoTimePerTick !== "undefined" ? DemoTimePerTick : 0.04) : 0);
 
+			const isVeh = (typeof VehicleObject !== "undefined" && this instanceof VehicleObject) || (this.Passengers !== undefined);
 			if (this.ns_posHistory.length > 0) {
 				const lastEntry = this.ns_posHistory[this.ns_posHistory.length - 1];
 				const d = Math.hypot(this.X - lastEntry.x, this.Z - lastEntry.z);
-				if ((!this.vehicleid || this.vehicleid < 0) && d > 12.0) {
+				// Reset on respawn/teleport ONLY: 12m for on-foot soldiers, 450m for vehicles/jets (never wipe fast jets!)
+				const teleportLimit = isVeh ? 450.0 : ((!this.vehicleid || this.vehicleid < 0) ? 12.0 : 450.0);
+				if (d > teleportLimit) {
 					this.ns_posHistory = [];
 					this.ns_smoothedSpeedKmh = 0;
+				} else if (isVeh && this.isFlyingVehicle) {
+					// Skip duplicate stale ticks where the server didn't emit a new aircraft transform yet
+					const curY = this.Y || 0;
+					const curRot = this.rotation || 0;
+					if (this.X === lastEntry.x && curY === lastEntry.y && this.Z === lastEntry.z && curRot === lastEntry.rot && (currentT - lastEntry.time) < 0.45) {
+						return;
+					}
 				}
 			}
 
@@ -233,6 +243,53 @@ class InterpolatedGameObject extends GameObject
 
 // Dictionary of all players 
 var AllPlayers = {}
+var CurrentMapCamoSuffix = "";
+window.CurrentMapCamoSuffix = "";
+
+function resolveSpawnSoldierBody(team, kitName) {
+	if (typeof SOLDIER_LOADOUT_DB === "undefined" || !SOLDIER_LOADOUT_DB) return "";
+	const bodies = SOLDIER_LOADOUT_DB.bodies || {};
+	const spawnSkins = SOLDIER_LOADOUT_DB.spawnSkins || {};
+	const facDefs = SOLDIER_LOADOUT_DB.factionDefaults || {};
+	const kitMap = SOLDIER_LOADOUT_DB.kitMap || {};
+
+	const kitLow = (kitName || "").toLowerCase().trim();
+	if (kitLow && spawnSkins[kitLow] && bodies[spawnSkins[kitLow]]) {
+		return spawnSkins[kitLow];
+	}
+
+	let fac = "";
+	if (kitLow.startsWith("gungame_blue_")) {
+		fac = (typeof BluForTeam !== "undefined" && BluForTeam) ? BluForTeam.toLowerCase() : "us";
+	} else if (kitLow.startsWith("gungame_red_")) {
+		fac = (typeof OpForTeam !== "undefined" && OpForTeam) ? OpForTeam.toLowerCase() : "ru";
+	} else if (kitLow.includes("_")) {
+		const prefix = kitLow.split("_")[0];
+		if (facDefs[prefix]) fac = prefix;
+	}
+	if (!fac) {
+		const teamFac = (team == 1)
+			? (typeof OpForTeam !== "undefined" ? OpForTeam : "")
+			: (typeof BluForTeam !== "undefined" ? BluForTeam : "");
+		fac = (teamFac || "").toLowerCase();
+	}
+	// Strip faction suffix variants like _ziptie, _iron, _alt
+	if (fac && !facDefs[fac] && fac.includes("_")) {
+		const baseFac = fac.split("_")[0];
+		if (facDefs[baseFac]) fac = baseFac;
+	}
+	if (!facDefs[fac]) {
+		const aliases = { usmc: "us", british: "gb", canadian: "cf", russian: "ru", chinese: "ch", german: "ger", french: "fr", dutch: "nl", polish: "pl", israeli: "idf", ins: "meinsurgent" };
+		if (aliases[fac] && facDefs[aliases[fac]]) fac = aliases[fac];
+	}
+
+	const role = (kitLow && kitMap[kitLow] && kitMap[kitLow][3]) ? kitMap[kitLow][3] : "rifleman";
+	if (facDefs[fac]) {
+		const pick = facDefs[fac][role] || facDefs[fac]["rifleman"] || facDefs[fac]["default"];
+		if (pick && bodies[pick]) return pick;
+	}
+	return bodies["pr_us_soldier1"] ? "pr_us_soldier1" : (Object.keys(bodies)[0] || "");
+}
 
 class PlayerObject extends InterpolatedGameObject
 {
@@ -255,6 +312,8 @@ class PlayerObject extends InterpolatedGameObject
 		this.team = 0
 		this.idle = 0
 		this.kit = ""
+		this.spawnSoldierBody = ""
+		this.awaitingSpawnSkin = true
 
 		this.health = 0
 
@@ -278,7 +337,26 @@ class PlayerObject extends InterpolatedGameObject
 	}
 	setKitImage() {
 		if (this.kit != "") {
-			var KitSubName = this.kit.split("_")[1]
+			const parts = this.kit.split("_");
+			var KitSubName = parts[1];
+			if (parts[0] === "gungame" && parts.length >= 3) {
+				const ggMap = {
+					ar: "support",
+					mg: "mg",
+					dmr: "marksman",
+					sniper: "sniper",
+					rif: "rifleman",
+					smg: "assault",
+					shotgun: "specialist",
+					pistol: "pilot",
+					grenade: "assault",
+					m79: "assault",
+					claymore: "sapper",
+					knife: "ninja",
+					scorpion: "assault"
+				};
+				KitSubName = ggMap[parts[2]] || parts[2];
+			}
 			if (KitSubName in KitNameToImageDictionary && KitNameToImageDictionary[KitSubName] in icons)
 				this.ns_kitImage = icons[KitNameToImageDictionary[KitSubName]]
 			else {
@@ -286,8 +364,7 @@ class PlayerObject extends InterpolatedGameObject
 				console.log("Parser: unknown kit name " + this.kit)
 				if (!this.ns_kitImage)
 					console.error("Parser: `rifleman` image in kitname-to-image dictionary must exist as fallback. Check the build script.")
-            }
-				
+			}
 		}
 	}
 	getTeamColor3d() {
@@ -356,7 +433,12 @@ function PlayerUpdate(FullMessage)
 
 		if (flags & PLAYERUPDATEFLAGS.TEAM)
 		{
-			Player.team = FullMessage.getInt8(pos++)
+			const newTeam = FullMessage.getInt8(pos++)
+			if (Player.team !== newTeam) {
+				Player.team = newTeam;
+				Player.spawnSoldierBody = "";
+				Player.awaitingSpawnSkin = true;
+			}
 		}
 		if (flags & PLAYERUPDATEFLAGS.SQUAD)
 		{
@@ -367,6 +449,7 @@ function PlayerUpdate(FullMessage)
 		}
 		if (flags & PLAYERUPDATEFLAGS.VEHICLE)
 		{
+			const prevVehId = Player.vehicleid;
 			RemovePlayerFromVehicle(id)
 			onVehicleDataChange(Player.vehicleid)
 			Player.vehicleid = FullMessage.getInt16(pos, true)
@@ -380,6 +463,10 @@ function PlayerUpdate(FullMessage)
 				pos+=1
 			}
 
+			if (InitialParse && prevVehId !== Player.vehicleid) {
+				_predRecordInterrupt(id, _timeCounter);
+			}
+
 			AddPlayerToVehicle(id)
 			onVehicleDataChange(Player.vehicleid)
 			onPlayerVehicleChange(id)
@@ -388,9 +475,13 @@ function PlayerUpdate(FullMessage)
 		if (flags & PLAYERUPDATEFLAGS.HEALTH)
 		{
 			const val = FullMessage.getInt8(pos++, true);
+			const prevHealth = Player.health;
 			if (!isFastForwarding)
 				Player.ns_healthRenderer.onDamage(Player, Player.health, val);
 			Player.health = val;
+			if (InitialParse && val > prevHealth) {
+				_predOnPlayerHealthGain(Player, prevHealth, val, _timeCounter);
+			}
 		}
 
 		if (flags & PLAYERUPDATEFLAGS.SCORE)
@@ -424,13 +515,26 @@ function PlayerUpdate(FullMessage)
 		}
 		if (flags & PLAYERUPDATEFLAGS.ISALIVE)
 		{
+			const wasAlive = Player.isAlive;
 			if (FullMessage.getInt8(pos++) == 1)
 			{
 				Player.isAlive = true
 				Player.isJoining = false
+				if (!wasAlive) {
+					Player.awaitingSpawnSkin = true;
+					if (InitialParse) {
+						Player.ns_predAliveSince = _timeCounter;
+						_predRecordInterrupt(id, _timeCounter);
+					}
+				}
 			}
 			else
+			{
 				Player.isAlive = false
+				if (wasAlive && InitialParse) {
+					_predRecordInterrupt(id, _timeCounter);
+				}
+			}
 		}
 		if (flags & PLAYERUPDATEFLAGS.ISJOINING)
 		{
@@ -443,7 +547,9 @@ function PlayerUpdate(FullMessage)
 			Player.Y = FullMessage.getInt16(pos + 2, true);
 			Player.Z = FullMessage.getInt16(pos + 4, true);
 			pos += 6
-
+			if (InitialParse) {
+				_predRecordPosition(id, Player.X, Player.Z, _timeCounter);
+			}
 		}
 		if (flags & PLAYERUPDATEFLAGS.ROTATION)
 		{
@@ -453,9 +559,24 @@ function PlayerUpdate(FullMessage)
 
 		if (flags & PLAYERUPDATEFLAGS.KIT)
 		{
+			const prevKit = Player.kit;
 			Player.kit = getString(FullMessage, pos)
 			pos += Player.kit.length + 1
 			Player.setKitImage();
+			if (InitialParse && prevKit && prevKit !== Player.kit) {
+				_predRecordInterrupt(id, _timeCounter);
+			}
+			// Lock soldier skin (face/body armor) on spawn; preserve it across mid-game kit swaps
+			if ((!Player.spawnSoldierBody || Player.awaitingSpawnSkin) && Player.kit) {
+				Player.spawnSoldierBody = resolveSpawnSoldierBody(Player.team, Player.kit);
+				Player.awaitingSpawnSkin = false;
+			}
+		}
+
+		// Handle respawn with the exact same kit (no KIT packet emitted)
+		if (Player.isAlive && Player.awaitingSpawnSkin && Player.kit) {
+			Player.spawnSoldierBody = resolveSpawnSoldierBody(Player.team, Player.kit);
+			Player.awaitingSpawnSkin = false;
 		}
 
 		// Stop before the events calling if doing initial parse
@@ -496,6 +617,9 @@ function PlayerAdd(FullMessage)
 		p.name = parsed[1]
 		p.hash = parsed[2]
 		p.ip = parsed[3]
+		if (InitialParse) {
+			_predRecordInterrupt(parsed[0], _timeCounter);
+		}
 
 		playerRow_Create(parsed[0])
 	}
@@ -595,9 +719,54 @@ class VehicleObject extends InterpolatedGameObject
 		const vLow = (this.name || "").toLowerCase();
 		const isDeployableStruct = (
 			vLow.startsWith("deployable_") || vLow.startsWith("fixed_") || vLow.startsWith("stationary_") ||
-			vLow.includes("ats_") || vLow.includes("aas_") || vLow.includes("zu23") ||
-			vLow.includes("djigit") || vLow.includes("bipod")
+			vLow.endsWith("_stationary") || vLow.startsWith("aa_") || vLow.startsWith("aaa_") ||
+			vLow.startsWith("sam_") || vLow.startsWith("ushmg_") || vLow.startsWith("2cm_flak") ||
+			vLow.startsWith("88mm_flak") || vLow === "zis3" || vLow === "pak36" || vLow === "pak40" ||
+			vLow === "zpu4" || vLow === "ammo_drop" || vLow.includes("ats_") || vLow.includes("aas_") ||
+			vLow.includes("zu23") || vLow.includes("djigit") || vLow.includes("bipod")
 		);
+
+		const inferFallbackIcon = () => {
+			if (vLow.includes("_acv_")) {
+				if (vLow.includes("tent")) return { key: "svg_dep_commandpost", weapon: false };
+				if (vLow.includes("technical") && coloredIcons["mini_tec_logi"]) return { key: "mini_tec_logi", weapon: false };
+				if (coloredIcons["mini_apc_light"]) return { key: "mini_apc_light", weapon: false };
+			}
+			if (typeof isUAVVehicle === "function" && isUAVVehicle(vLow) && coloredIcons["crosshair_uav"]) {
+				return { key: "crosshair_uav", weapon: false };
+			}
+			if (vLow === "ammo_drop") {
+				return { key: "svg_dep_crate", weapon: false };
+			}
+			if (isDeployableStruct) {
+				if (vLow.includes("tow") || vLow.includes("milan") || vLow.includes("kornet") || vLow.includes("hj8") || vLow.includes("spike") || vLow.includes("spg9")) {
+					return { key: "mini_stw_atgm", weapon: true };
+				} else if (vLow.includes("zu23") || vLow.includes("zpu4") || vLow.includes("flak") || vLow.startsWith("aa_") || vLow.startsWith("aaa_")) {
+					return { key: "mini_stw_aa_medium", weapon: true };
+				} else if (vLow.includes("stinger") || vLow.includes("djigit") || vLow.includes("igla") || vLow.includes("mistral") || vLow.includes("_aa") || vLow.startsWith("sam_")) {
+					return { key: "mini_stw_aa_light", weapon: true };
+				} else if (vLow.includes("mortar") || vLow.includes("podnos")) {
+					return { key: "mini_stw_mortar", weapon: true };
+				} else if (vLow.includes("50cal") || vLow.includes("tripod") || vLow.includes("dshk") || vLow.includes("kord") || vLow.includes("m2hb") || vLow.includes("m1910") || vLow.includes("mg42") || vLow.includes("agl") || vLow.startsWith("ushmg_") || vLow.endsWith("_stationary")) {
+					return { key: "mini_stw_mg", weapon: true };
+				} else if (vLow.includes("commandpost") || vLow.includes("_fob")) {
+					return { key: "svg_dep_commandpost", weapon: false };
+				} else if (vLow.includes("bunker") || vLow.includes("firebase") || vLow.includes("hideout") || vLow.includes("pillbox") || vLow.includes("outpost")) {
+					return { key: "svg_dep_bunker", weapon: false };
+				} else if (vLow.includes("sandbag") || vLow.includes("foxhole")) {
+					return { key: "svg_dep_sandbags", weapon: false };
+				} else if (vLow.includes("razorwire")) {
+					return { key: "svg_dep_razorwire", weapon: false };
+				} else if (vLow.includes("roadblock")) {
+					return { key: "svg_dep_roadblock", weapon: false };
+				} else if (vLow.includes("_csb_")) {
+					return { key: "svg_dep_bridge", weapon: false };
+				} else if (vLow.includes("crate")) {
+					return { key: "svg_dep_crate", weapon: false };
+				}
+			}
+			return { key: "", weapon: false };
+		};
 
 		if (this.name in vehicleData) {
 			const data = vehicleData[this.name];
@@ -607,33 +776,12 @@ class VehicleObject extends InterpolatedGameObject
 				if (coloredIcons[derived]) iconKey = derived;
 			}
 			let isWeaponIcon = false;
-			if (!iconKey && isDeployableStruct) {
-				if (vLow.includes("tow") || vLow.includes("milan") || vLow.includes("kornet") || vLow.includes("hj8") || vLow.includes("spike") || vLow.includes("spg9")) {
-					iconKey = "mini_stw_atgm"; isWeaponIcon = true;
-				} else if (vLow.includes("zu23")) {
-					iconKey = "mini_stw_aa_medium"; isWeaponIcon = true;
-				} else if (vLow.includes("stinger") || vLow.includes("djigit") || vLow.includes("igla") || vLow.includes("mistral") || vLow.includes("_aa")) {
-					iconKey = "mini_stw_aa_light"; isWeaponIcon = true;
-				} else if (vLow.includes("mortar") || vLow.includes("podnos")) {
-					iconKey = "mini_stw_mortar"; isWeaponIcon = true;
-				} else if (vLow.includes("50cal") || vLow.includes("tripod") || vLow.includes("dshk") || vLow.includes("kord") || vLow.includes("m2hb") || vLow.includes("m1910") || vLow.includes("mg42") || vLow.includes("agl")) {
-					iconKey = "mini_stw_mg"; isWeaponIcon = true;
-				} else if (vLow.includes("commandpost") || vLow.includes("_fob")) {
-					iconKey = "svg_dep_commandpost";
-				} else if (vLow.includes("bunker") || vLow.includes("firebase") || vLow.includes("hideout") || vLow.includes("pillbox") || vLow.includes("outpost")) {
-					iconKey = "svg_dep_bunker";
-				} else if (vLow.includes("sandbag") || vLow.includes("foxhole")) {
-					iconKey = "svg_dep_sandbags";
-				} else if (vLow.includes("razorwire")) {
-					iconKey = "svg_dep_razorwire";
-				} else if (vLow.includes("roadblock")) {
-					iconKey = "svg_dep_roadblock";
-				} else if (vLow.includes("_csb_")) {
-					iconKey = "svg_dep_bridge";
-				} else if (vLow.includes("crate")) {
-					iconKey = "svg_dep_crate";
-				}
-			} else if (iconKey && isDeployableStruct && iconKey.startsWith("mini_stw_")) {
+			if (!iconKey) {
+				const inferred = inferFallbackIcon();
+				iconKey = inferred.key;
+				isWeaponIcon = inferred.weapon;
+			}
+			if (iconKey && iconKey.startsWith("mini_stw_")) {
 				isWeaponIcon = true;
 			}
 
@@ -641,7 +789,7 @@ class VehicleObject extends InterpolatedGameObject
 				this.ns_mapImage = coloredIcons[iconKey];
 			} else if (iconKey && iconKey.startsWith("svg_dep_")) {
 				this.ns_mapIconKey = iconKey;
-			} else if (!isDeployableStruct) {
+			} else if (!isDeployableStruct && data.MiniMapIcon !== "empty") {
 				this.ns_mapImage = coloredIcons["mini_shp_light"];
 			}
 
@@ -653,8 +801,16 @@ class VehicleObject extends InterpolatedGameObject
 			this.ns_geomName = data.Geometry;
 		}
 		else {
-			if (!isDeployableStruct) {
+			const inferred = inferFallbackIcon();
+			if (inferred.key && coloredIcons[inferred.key]) {
+				this.ns_mapImage = coloredIcons[inferred.key];
+			} else if (inferred.key && inferred.key.startsWith("svg_dep_")) {
+				this.ns_mapIconKey = inferred.key;
+			} else if (!isDeployableStruct) {
 				this.ns_mapImage = coloredIcons["mini_shp_light"];
+			}
+			if (inferred.weapon || (inferred.key && inferred.key.startsWith("mini_stw_"))) {
+				this.ns_isStationaryWeapon = true;
 			}
 			console.log("Parser: Vehicle Name not in dictionary: " + this.name)
 		}
@@ -700,6 +856,16 @@ function VehicleAdd(FullMessage)
 	}
 
 	CurrentVehicle.isFlyingVehicle = isFlyingVehicle(CurrentVehicle.name)
+	CurrentVehicle.isJetVehicle = isJetVehicle(CurrentVehicle.name)
+	if (CurrentVehicle.isClimbingVehicle || CurrentVehicle.ns_isStationaryWeapon || _predIsBuildableDeployable(CurrentVehicle.name)) {
+		CurrentVehicle.trackMode = "";
+	} else if (CurrentVehicle.isJetVehicle) {
+		CurrentVehicle.trackMode = "jet";
+	} else if (CurrentVehicle.isFlyingVehicle) {
+		CurrentVehicle.trackMode = "heli";
+	} else {
+		CurrentVehicle.trackMode = "ground";
+	}
 	
 }
 
@@ -741,13 +907,21 @@ function VehicleUpdate(FullMessage)
 			pos += 2
 		}
 
+		if (InitialParse && CurrentVehicle.trackMode && (flags & (VEHICLEUPDATEFLAGS.POSITION | VEHICLEUPDATEFLAGS.ROTATION))) {
+			_vehTrackRecordSample(id, CurrentVehicle.trackMode, CurrentVehicle.name, _timeCounter, CurrentVehicle.X, CurrentVehicle.Y, CurrentVehicle.Z, CurrentVehicle.rotation);
+		}
+
 		if (flags & VEHICLEUPDATEFLAGS.HEALTH)
 		{
 			const val = FullMessage.getInt16(pos, true);
+			const prevVehHealth = CurrentVehicle.health;
 			if (!isFastForwarding)
 				CurrentVehicle.ns_healthRenderer.onDamage(CurrentVehicle, CurrentVehicle.health, val);
 			CurrentVehicle.health = val;
 			pos += 2
+			if (InitialParse && !CurrentVehicle.isNew && prevVehHealth != null && val !== prevVehHealth) {
+				_predOnVehicleHealthChange(CurrentVehicle, prevVehHealth, val, _timeCounter);
+			}
 
 			onVehicleDataChange(id)
 		}
@@ -761,8 +935,11 @@ function VehicleUpdate(FullMessage)
 		if (CurrentVehicle.isNew)
 		{
 			CurrentVehicle.isNew = false
-			if (!InitialParse)
+			if (InitialParse) {
+				_predOnVehicleFirstPos(CurrentVehicle, _timeCounter);
+			} else {
 				onNewVehicle(id)
+			}
 		}
 	}
 }
@@ -942,11 +1119,14 @@ function FoBAdd(FullMessage)
 		pos+= unpacked[0]
 		const parsed = unpacked[1]
 		
-		new FoBObject(parsed[0], //Object ID 
+		const fobObj = new FoBObject(parsed[0], //Object ID 
 					parsed[1],       //Team 
 					parsed[2], //X 
 					parsed[3], //Y 
 					parsed[4]) //Z 
+		if (InitialParse) {
+			_predOnFobAdd(fobObj, _timeCounter);
+		}
 	}
 }
 
@@ -960,8 +1140,12 @@ function FoBRemove(FullMessage)
 		pos+= unpacked[0]
 		const parsed = unpacked[1]
 		
-		if (parsed[0] in AllFobs)
+		if (parsed[0] in AllFobs) {
+			if (InitialParse) {
+				_predOnFobRemove(parsed[0], _timeCounter);
+			}
 			delete AllFobs[parsed[0]]
+		}
 	}
 }
 
@@ -1078,6 +1262,10 @@ function ProjUpdate(FullMessage)
 		proj.X = parsed[2]
 		proj.Y = parsed[3]
 		proj.Z = parsed[4]
+
+		if (InitialParse && proj) {
+			_projTrackRecordSample(id, proj.type, _timeCounter, proj.X, proj.Y, proj.Z, proj.yaw);
+		}
 		
 		proj.ns_isFast = proj.ns_isFast | (Math.pow(proj.X - proj.ns_lastX, 2) + Math.pow(proj.Z - proj.ns_lastZ, 2) > 1600 * DemoTimePerTick) // 40m/s
 	}
@@ -1094,6 +1282,11 @@ function ProjAdd(FullMessage)
 					parsed[3], // templateName
 					parsed[4], // yaw
 					parsed[5], parsed[6], parsed[7]) // xyz
+
+	if (InitialParse) {
+		_predOnProjAdd(parsed[1], parsed[2], parsed[3], _timeCounter);
+		_projTrackRecordSample(parsed[0], parsed[2], _timeCounter, parsed[5], parsed[6], parsed[7], parsed[4]);
+	}
 	
 }
 function ProjRemoved(FullMessage)
@@ -1416,9 +1609,11 @@ function Update()
 			break
 	}
 
-	// If this is the initial parse phase, count the ticks
-	if (InitialParse)
+	// If this is the initial parse phase, count the ticks and sample periodic FOB digging builders
+	if (InitialParse) {
 		Tick_Count++
+		_predTickFobShovels(_timeCounter);
+	}
 
 
 	// If we're doing initial parse or if this is live demo, save states.
@@ -1518,18 +1713,17 @@ function ServerDetails(FullMessage)
 	{
 		var index = ServerName.indexOf("]")
 		var split = ServerName.substring(1, index).split(".")
-		gameVersionMinor = split[1]
-		
-		//TODO Remove this hack for protocol version 4
-		gunnerRotationSupported = (gameVersionMinor >= 4)
-		/////////////////
-		
-		gameVersionRevision = split[2]
-		gameVersionHotfix = split[3]
-		
-		
 		gameVersionMod = split[0].split(" ")[0]
 		gameVersionMajor = split[0].split(" ")[1]
+		gameVersionMinor = split[1]
+		gameVersionRevision = split[2]
+		gameVersionHotfix = split[3]
+
+		//TODO Remove this hack for protocol version 4
+		const vMaj = Number(gameVersionMajor) || 0;
+		const vMin = Number(gameVersionMinor) || 0;
+		gunnerRotationSupported = (vMaj > 1) || (vMaj === 1 && vMin >= 4);
+		/////////////////
 		
 	}
 	catch(err){}
@@ -1545,6 +1739,9 @@ function ServerDetails(FullMessage)
 
 	MapName = getString(FullMessage, pos)
 	pos += MapName.length + 1
+	const mapKeyLow = (MapName || "").toLowerCase();
+	CurrentMapCamoSuffix = (typeof MAP_CAMO_DB !== "undefined" && MAP_CAMO_DB[mapKeyLow]) ? MAP_CAMO_DB[mapKeyLow] : "";
+	window.CurrentMapCamoSuffix = CurrentMapCamoSuffix;
 
 	GameMode = getString(FullMessage, pos)
 	pos += GameMode.length + 1
@@ -1710,6 +1907,11 @@ function ProjAdd(FullMessage)
 					parsed[4], // yaw
 					parsed[5], parsed[6], parsed[7]) // xyz
 
+	if (InitialParse) {
+		_predOnProjAdd(parsed[1], parsed[2], parsed[3], _timeCounter);
+		_projTrackRecordSample(parsed[0], parsed[2], _timeCounter, parsed[5], parsed[6], parsed[7], parsed[4]);
+	}
+
 	if (!isFastForwarding && typeof triggerShootingShockwave === 'function' && parsed && parsed[5] != null && parsed[7] != null) {
 		const shooterId = parsed[1];
 		const tName = (parsed[3] || "").toLowerCase();
@@ -1754,6 +1956,9 @@ function ProjRemoved(FullMessage)
 		const index = FullMessage.getUint16(pos, true)
 		pos += 2
 		const proj = AllProj[index]
+		if (InitialParse) {
+			_projTrackClose(index);
+		}
 		if (proj && typeof trigger3DExplosion === "function") {
 			let px = (typeof proj.getX === "function") ? proj.getX() : proj.X;
 			let py = (typeof proj.getY === "function") ? proj.getY() : (proj.Y || 0);
@@ -1918,6 +2123,10 @@ $(() =>
 			obj.RevivedName = revivedObj.name
 		else
 			console.log("Received Revived ID of invalid player")
+
+		if (InitialParse && medicObj != null) {
+			_predOnRevive(medic, revived, _timeCounter);
+		}
 			
 		return obj
 	}
@@ -1934,6 +2143,9 @@ $(() =>
 	{
 		const vehicleID = FullMessage.getInt16(1, true)
 		const vehicle = AllVehicles[vehicleID]
+		if (InitialParse && vehicle && vehicle.trackMode) {
+			_vehTrackBreakSegment(vehicleID);
+		}
 		delete AllVehicles[vehicleID]
 		
 		const playerKnown = (FullMessage.getUint8(3) != 0)
@@ -2179,14 +2391,38 @@ function isVehicleContainer(VehicleID)
 	return (v == null || v.isClimbingVehicle)
 }
 
+function isJetVehicle(vehicleName)
+{
+	const name = (vehicleName || "").toLowerCase();
+	if (!name || name.includes("_the_") || name.includes("_ahe_") || name.startsWith("the_") || name.startsWith("ahe_")) {
+		return false;
+	}
+	return name.includes("_jet_") ||
+		name.includes("_air_") ||
+		name.startsWith("air_") ||
+		name.startsWith("usair_") ||
+		name.startsWith("ruair_") ||
+		name.startsWith("chair_") ||
+		name.includes("a10") || name.includes("su25") || name.includes("su30") || name.includes("su34") ||
+		name.includes("mig") || name.includes("f16") || name.includes("f18") || name.includes("f15") ||
+		name.includes("f4_") || name.includes("a4_") || name.includes("tornado") || name.includes("harrier") ||
+		name.includes("q5") || name.includes("j10") || name.includes("mirage") || name.includes("ef2000") ||
+		name.includes("gripen") || name.includes("c130") || name.includes("c47") || name.includes("ac130") ||
+		name.includes("spitfire") || name.includes("bf109") || name.includes("fw190") || name.includes("p51") ||
+		name.includes("yak") || name.includes("il2") || name.includes("ju87") || name.includes("a1h") ||
+		name.includes("ov10") ||
+		isUAVVehicle(name);
+}
+
 function isFlyingVehicle(vehicleName)
 {
 	const name = (vehicleName || "").toLowerCase();
 	return name.includes("_the_") ||
 		name.includes("_ahe_") ||
-		name.includes("_jet_") ||
+		name.startsWith("the_") ||
+		name.startsWith("ahe_") ||
 		name.startsWith("spectator") ||
-		isUAVVehicle(name);
+		isJetVehicle(name);
 }
 function isUAVVehicle(vehicleName) {
 	const name = (vehicleName || "").toLowerCase();
@@ -2248,6 +2484,1024 @@ function shallowCopy(Source, Target)
 	
 	return Target;
 }
+
+// =========================================================================
+// Phase 4: Predictive Equipment Timeline (Lookahead Pre-Analysis Engine)
+// =========================================================================
+window.PlayerActionTimeline = {};
+var _predRawEvents = {};
+var _predInterrupts = {};
+var _predPosHist = {};
+var _predActiveFobs = {};
+var _predLastFobScanT = -10;
+
+function resetPredictiveTimelineCollector() {
+	window.PlayerActionTimeline = {};
+	_predRawEvents = {};
+	_predInterrupts = {};
+	_predPosHist = {};
+	_predActiveFobs = {};
+	_predLastFobScanT = -10;
+}
+
+function _predAddRawEvent(playerId, tEvent, leadSec, trailSec, itemType, grip, priority, templateName) {
+	if (playerId == null || isNaN(playerId)) return;
+	if (!_predRawEvents[playerId]) _predRawEvents[playerId] = [];
+	_predRawEvents[playerId].push({
+		tEvent: tEvent,
+		s: Math.max(0, tEvent - leadSec),
+		e: tEvent + trailSec,
+		t: itemType,
+		g: grip,
+		p: priority,
+		n: templateName || ""
+	});
+}
+
+function _predRecordInterrupt(playerId, tSec) {
+	if (playerId == null || isNaN(playerId)) return;
+	let arr = _predInterrupts[playerId];
+	if (!arr) {
+		arr = [];
+		_predInterrupts[playerId] = arr;
+	}
+	if (arr.length === 0 || tSec > arr[arr.length - 1] + 0.001) {
+		arr.push(tSec);
+	}
+}
+
+function _predRecordPosition(playerId, x, z, tSec) {
+	if (playerId == null || isNaN(x) || isNaN(z)) return;
+	let hist = _predPosHist[playerId];
+	if (!hist) {
+		hist = [];
+		_predPosHist[playerId] = hist;
+	}
+	const last = hist.length > 0 ? hist[hist.length - 1] : null;
+	if (!last || tSec - last.t >= 0.35) {
+		hist.push({ t: tSec, x: x, z: z });
+		if (hist.length > 12) hist.shift();
+	}
+}
+
+function _predMovedDistance(playerId, tNow, lookbackSec) {
+	const hist = _predPosHist[playerId];
+	if (!hist || hist.length < 2) return 0;
+	const newest = hist[hist.length - 1];
+	let oldest = hist[0];
+	for (let i = hist.length - 2; i >= 0; i--) {
+		oldest = hist[i];
+		if (tNow - hist[i].t >= lookbackSec) break;
+	}
+	return Math.hypot(newest.x - oldest.x, newest.z - oldest.z);
+}
+
+function _predIsMedicKit(kitName) {
+	if (!kitName) return false;
+	const k = kitName.toLowerCase();
+	return k.includes("medic") || k.includes("corpsman") || k.includes("sanitater");
+}
+
+function _predIsOnFootAlive(p) {
+	return !!(p && p.isAlive && !p.isJoining && (p.vehicleid == null || p.vehicleid < 0));
+}
+
+function _predIsBuildableDeployable(vName) {
+	if (!vName) return false;
+	const n = vName.toLowerCase();
+	if (/_(jep|trk|apc|ifv|tnk|aav|atm|acv|ahe|the|jet|shp|bik)_|^boat_/.test(n)) return false;
+	return (
+		n.includes("deployable") || n.includes("firebase") || n.includes("hideout") ||
+		n.includes("commandpost") || n.includes("sandbag") || n.includes("bunker") ||
+		n.includes("razorwire") || n.includes("roadblock") || n.includes("foxhole") ||
+		n.includes("stationary") || n.includes("mortar") || n.includes("ats_") ||
+		n.includes("aas_") || n.includes("zu23") || n.includes("tow") ||
+		n.includes("kornet") || n.includes("spg") || n.includes("_csb_") ||
+		n.includes("pillbox") || n.includes("trench") || n.includes("emplacement") ||
+		n.startsWith("aa_") || n.startsWith("at_") || n.startsWith("hmg_")
+	);
+}
+
+function _predOnProjAdd(shooterId, projType, templateName, tSec) {
+	const shooter = AllPlayers[shooterId];
+	if (!shooter || !shooter.isAlive) return;
+	// Require shooter to be on foot (ignore vehicle-fired rockets/smokes)
+	if (shooter.vehicleid != null && shooter.vehicleid >= 0 && !isVehicleContainer(shooter.vehicleid)) return;
+
+	const tLow = (templateName || "").toLowerCase();
+	if (projType === 35) {
+		// AA launcher (Stinger, Igla, Starstreak): ~4s aim/lock + release
+		_predAddRawEvent(shooterId, tSec, 4.0, 1.5, "launcher", "launcher", 95, tLow);
+	} else if (projType === 33 || projType === 34) {
+		// HAT / Guided infantry AT (SRAW, Eryx, RPG-29, Milan, etc.)
+		_predAddRawEvent(shooterId, tSec, 3.5, 1.8, "launcher", "launcher", 95, tLow);
+	} else if (projType === 32) {
+		// LAT / RPG launcher
+		_predAddRawEvent(shooterId, tSec, 3.0, 1.3, "launcher", "launcher", 95, tLow);
+	} else if (projType === 38) {
+		// Frag grenade
+		_predAddRawEvent(shooterId, tSec, 1.8, 0.8, "frag", "grenade", 90, tLow);
+	} else if (projType === 39 || projType === 41) {
+		// Handheld smoke grenade (exclude vehicle M82 / mortar / artillery smoke)
+		if (tLow.includes("m82") || tLow.includes("smokelauncher") || tLow.includes("mortar") || tLow.includes("artillery") || tLow.includes("120mm") || tLow.includes("155mm") || tLow.includes("81mm")) {
+			return;
+		}
+		_predAddRawEvent(shooterId, tSec, 1.8, 0.8, "smoke", "grenade", 90, tLow);
+	} else if (projType === 1 || projType === 3) {
+		_predAddRawEvent(shooterId, tSec, 3.0, 1.0, "mine_at", "item_hold", 90, tLow);
+	} else if (projType === 2) {
+		_predAddRawEvent(shooterId, tSec, 3.0, 1.0, "mine_ap", "item_hold", 90, tLow);
+	} else if (projType === 4) {
+		_predAddRawEvent(shooterId, tSec, 3.0, 1.0, "claymore", "item_hold", 90, tLow);
+	} else if (projType === 5 || projType === 6) {
+		const isIed = tLow.includes("ied") || tLow.includes("insrg") || tLow.includes("cellphone");
+		_predAddRawEvent(shooterId, tSec, 3.0, 1.0, isIed ? "ied" : "c4", "item_hold", 90, tLow);
+	}
+}
+
+function _predOnRevive(medicId, revivedId, tSec) {
+	const medic = AllPlayers[medicId];
+	if (!_predIsOnFootAlive(medic)) return;
+	_predAddRawEvent(medicId, tSec, 4.0, 0.8, "epipen", "item_hold", 95, "epipen");
+}
+
+function _predOnPlayerHealthGain(player, oldH, newH, tSec) {
+	if (!_predIsOnFootAlive(player)) return;
+	// Ignore respawn/revive initial HP reset
+	if (oldH <= 0) return;
+	if (player.ns_predAliveSince != null && (tSec - player.ns_predAliveSince) < 1.2) return;
+
+	const delta = newH - oldH;
+	if (delta <= 0) return;
+
+	// Check for closest friendly medic within 6.0m horizontal (handles prone/crouch & slopes cleanly)
+	let closestMedic = null;
+	let closestMedicDist = 6.1;
+	let anyMedicWithin6m = false;
+	for (const pid in AllPlayers) {
+		const other = AllPlayers[pid];
+		if (!other || other.id === player.id || other.team !== player.team) continue;
+		if (!_predIsOnFootAlive(other) || !_predIsMedicKit(other.kit)) continue;
+		const dy = Math.abs((other.Y || 0) - (player.Y || 0));
+		if (dy > 3.5) continue;
+		const d = Math.hypot(other.X - player.X, other.Z - player.Z);
+		if (d <= 6.2) anyMedicWithin6m = true;
+		if (d < closestMedicDist) {
+			closestMedicDist = d;
+			closestMedic = other;
+		}
+	}
+
+	if (closestMedic) {
+		_predAddRawEvent(closestMedic.id, tSec, 1.5, 1.0, "medikit", "item_hold", 75, "");
+		return;
+	}
+
+	// Medic self-healing with medic bag (small continuous ticks)
+	if (_predIsMedicKit(player.kit) && delta >= 1 && delta <= 10) {
+		_predAddRawEvent(player.id, tSec, 1.5, 1.0, "medikit", "item_hold", 72, "");
+		return;
+	}
+
+	// Lone soldier self-healing with Field Dressing (+10..+33 HP jump while stationary/slow-crawling)
+	if (!anyMedicWithin6m && delta >= 8) {
+		const moved = _predMovedDistance(player.id, tSec, 3.0);
+		if (moved <= 4.0) {
+			_predAddRawEvent(player.id, tSec, 3.5, 0.7, "dressing", "item_hold", 70, "");
+		}
+	}
+}
+
+function _predOnVehicleHealthChange(veh, oldH, newH, tSec) {
+	if (!veh || !_predIsBuildableDeployable(veh.name)) return;
+	if (isNaN(veh.X) || isNaN(veh.Z)) return;
+	const delta = newH - oldH;
+	// Exclude huge instant explosion/C4 damage spikes
+	if (delta === 0 || Math.abs(delta) > 250) return;
+
+	const isBuild = delta > 0;
+	const maxDist = isBuild ? 8.5 : 7.5;
+	const candidates = [];
+	for (const pid in AllPlayers) {
+		const p = AllPlayers[pid];
+		if (!_predIsOnFootAlive(p)) continue;
+		if (isBuild) {
+			if (veh.team && p.team && p.team !== veh.team) continue;
+		} else {
+			if (veh.team && p.team && p.team === veh.team) continue;
+			if (_predMovedDistance(p.id, tSec, 1.5) > 4.0) continue;
+		}
+		if (Math.abs((p.Y || 0) - (veh.Y || 0)) > 4.0) continue;
+		const d = Math.hypot(p.X - veh.X, p.Z - veh.Z);
+		if (d <= maxDist) {
+			candidates.push({ id: p.id, d: d });
+		}
+	}
+	if (candidates.length === 0) return;
+	candidates.sort((a, b) => a.d - b.d);
+	const limit = Math.min(5, candidates.length);
+	for (let i = 0; i < limit; i++) {
+		_predAddRawEvent(candidates[i].id, tSec, 1.8, 1.5, "shovel", "shovel", 65, "");
+	}
+}
+
+function _predOnFobAdd(fob, tSec) {
+	if (!fob || isNaN(fob.X) || isNaN(fob.Z)) return;
+	// Register FOB so all friendly soldiers digging it up over the next ~38s hold shovels,
+	// and enemies digging it down prior to FoBRemove also hold shovels!
+	_predActiveFobs[fob.id] = {
+		id: fob.id,
+		team: fob.team,
+		x: fob.X,
+		y: fob.Y || 0,
+		z: fob.Z,
+		tAdd: tSec,
+		enemyCands: []
+	};
+	for (const pid in AllPlayers) {
+		const p = AllPlayers[pid];
+		if (!_predIsOnFootAlive(p)) continue;
+		if (fob.team && p.team && p.team !== fob.team) continue;
+		if (Math.abs((p.Y || 0) - (fob.Y || 0)) > 4.0) continue;
+		const d = Math.hypot(p.X - fob.X, p.Z - fob.Z);
+		if (d <= 9.5 && _predMovedDistance(p.id, tSec, 2.0) <= 4.0) {
+			_predAddRawEvent(p.id, tSec, 1.2, 1.6, "shovel", "shovel", 62, "");
+		}
+	}
+}
+
+function _predOnFobRemove(fobId, tSec) {
+	const rec = _predActiveFobs[fobId];
+	if (!rec) return;
+	// Commit buffered enemy shovel candidates from the 35s leading up to FOB destruction
+	const cands = rec.enemyCands;
+	if (cands && cands.length > 0) {
+		for (let i = 0; i < cands.length; i++) {
+			const c = cands[i];
+			if (tSec - c.t <= 35.0) {
+				_predAddRawEvent(c.pid, c.t, 1.2, 1.5, "shovel", "shovel", 64, "");
+			}
+		}
+	}
+	delete _predActiveFobs[fobId];
+}
+
+function _predTickFobShovels(tSec) {
+	if (tSec - _predLastFobScanT < 1.0) return;
+	_predLastFobScanT = tSec;
+	for (const fid in _predActiveFobs) {
+		const f = _predActiveFobs[fid];
+		if (!f) continue;
+		const buildingWindow = (tSec - f.tAdd <= 38.0);
+		for (const pid in AllPlayers) {
+			const p = AllPlayers[pid];
+			if (!_predIsOnFootAlive(p)) continue;
+			if (Math.abs((p.Y || 0) - f.y) > 4.0) continue;
+			const d = Math.hypot(p.X - f.x, p.Z - f.z);
+			if (d > 9.5) continue;
+			if (_predMovedDistance(p.id, tSec, 2.0) > 3.5) continue;
+
+			if (buildingWindow && (!f.team || !p.team || p.team === f.team)) {
+				_predAddRawEvent(p.id, tSec, 1.0, 1.4, "shovel", "shovel", 60, "");
+			} else if (f.team && p.team && p.team !== f.team) {
+				f.enemyCands.push({ pid: p.id, t: tSec });
+			}
+		}
+		// Keep only recent 40s of enemy dig candidates to keep memory tiny
+		while (f.enemyCands.length > 0 && (tSec - f.enemyCands[0].t) > 40.0) {
+			f.enemyCands.shift();
+		}
+	}
+}
+
+function _predOnVehicleFirstPos(veh, tSec) {
+	if (!veh || !veh.name || isNaN(veh.X) || isNaN(veh.Z)) return;
+	const n = veh.name.toLowerCase();
+	const isAmmo = (n === "ammo_drop" || n.includes("ammo_drop") || n.includes("ammobag"));
+	const isGrapple = (n === "grapplinghookropecontainer" || n.includes("grapplinghook"));
+	if (!isAmmo && !isGrapple) return;
+
+	const maxDist = isAmmo ? 4.5 : 5.0;
+	let bestId = null;
+	let bestScore = Infinity;
+	for (const pid in AllPlayers) {
+		const p = AllPlayers[pid];
+		if (!_predIsOnFootAlive(p)) continue;
+		if (veh.team && p.team && p.team !== veh.team) continue;
+		const d = Math.hypot(p.X - veh.X, (p.Y || 0) - (veh.Y || 0), p.Z - veh.Z);
+		if (d <= maxDist) {
+			let score = d;
+			if (isAmmo && p.kit && p.kit.toLowerCase().includes("rifleman")) score -= 1.0;
+			if (score < bestScore) {
+				bestScore = score;
+				bestId = p.id;
+			}
+		}
+	}
+	if (bestId != null) {
+		if (isAmmo) {
+			_predAddRawEvent(bestId, tSec, 1.5, 0.8, "ammokit", "item_hold", 65, "");
+		} else {
+			_predAddRawEvent(bestId, tSec, 2.0, 0.8, "grapplinghook", "item_hold", 70, "");
+		}
+	}
+}
+
+function _predClampWindow(ev, interrupts) {
+	let s = ev.s;
+	let e = ev.e;
+	if (interrupts && interrupts.length > 0) {
+		const tEv = ev.tEvent;
+		// Binary search for latest interrupt < tEv - 0.001 and earliest interrupt > tEv + 0.001
+		let lo = 0, hi = interrupts.length - 1, idx = interrupts.length;
+		while (lo <= hi) {
+			const mid = (lo + hi) >> 1;
+			if (interrupts[mid] > tEv + 0.001) {
+				idx = mid;
+				hi = mid - 1;
+			} else {
+				lo = mid + 1;
+			}
+		}
+		if (idx < interrupts.length && interrupts[idx] < e) {
+			e = interrupts[idx];
+		}
+		// Scan backward for strictly earlier interrupt (< tEv - 0.001)
+		let pIdx = idx - 1;
+		while (pIdx >= 0 && interrupts[pIdx] >= tEv - 0.001) pIdx--;
+		if (pIdx >= 0 && interrupts[pIdx] > s) {
+			s = interrupts[pIdx];
+		}
+	}
+	if (e - s < 0.12) return null;
+	return { s: s, e: e, t: ev.t, g: ev.g, p: ev.p, n: ev.n, tEvent: ev.tEvent };
+}
+
+function finalizePredictiveTimeline() {
+	const timeline = {};
+	let totalSegments = 0;
+
+	for (const pid in _predRawEvents) {
+		const raw = _predRawEvents[pid];
+		if (!raw || raw.length === 0) continue;
+		const interrupts = _predInterrupts[pid] || null;
+
+		const clamped = [];
+		const pts = [];
+		for (let i = 0; i < raw.length; i++) {
+			const c = _predClampWindow(raw[i], interrupts);
+			if (c) {
+				clamped.push(c);
+				pts.push(c.s, c.e);
+			}
+		}
+		if (clamped.length === 0) continue;
+
+		pts.sort((a, b) => a - b);
+		const uniqPts = [pts[0]];
+		for (let i = 1; i < pts.length; i++) {
+			if (pts[i] - uniqPts[uniqPts.length - 1] > 0.005) {
+				uniqPts.push(pts[i]);
+			}
+		}
+
+		// Sweep elementary intervals and resolve priority conflicts
+		const merged = [];
+		for (let k = 0; k < uniqPts.length - 1; k++) {
+			const a = uniqPts[k];
+			const b = uniqPts[k + 1];
+			const mid = 0.5 * (a + b);
+			let best = null;
+			for (let j = 0; j < clamped.length; j++) {
+				const ev = clamped[j];
+				if (ev.s <= mid && mid <= ev.e) {
+					if (!best || ev.p > best.p || (ev.p === best.p && ev.tEvent > best.tEvent)) {
+						best = ev;
+					}
+				}
+			}
+			if (!best) continue;
+			const prev = merged.length > 0 ? merged[merged.length - 1] : null;
+			if (prev && Math.abs(prev.e - a) <= 0.02 && prev.t === best.t && prev.g === best.g && prev.n === best.n) {
+				prev.e = b;
+			} else {
+				merged.push({ s: a, e: b, t: best.t, g: best.g, n: best.n });
+			}
+		}
+
+		if (merged.length > 0) {
+			timeline[pid] = merged;
+			totalSegments += merged.length;
+		}
+	}
+
+	window.PlayerActionTimeline = timeline;
+	_predRawEvents = {};
+	_predInterrupts = {};
+	_predPosHist = {};
+	_predActiveFobs = {};
+	return totalSegments;
+}
+
+window.getPlayerActionAtTime = function(playerId, timeSec) {
+	const tl = window.PlayerActionTimeline;
+	if (!tl) return null;
+	const segs = tl[playerId];
+	if (!segs || segs.length === 0) return null;
+	let lo = 0;
+	let hi = segs.length - 1;
+	while (lo <= hi) {
+		const mid = (lo + hi) >> 1;
+		const seg = segs[mid];
+		if (timeSec < seg.s) {
+			hi = mid - 1;
+		} else if (timeSec > seg.e) {
+			lo = mid + 1;
+		} else {
+			return seg;
+		}
+	}
+	return null;
+};
+
+// =========================================================================
+// Pre-Simulated Motion Tracks (Jets, Helicopters, Ground Vehicles & Projectiles)
+// Zero-Phase Bidirectional Offline Solver built during InitialParse
+// =========================================================================
+window.VehicleMotionTracks = {};
+window.JetFlightTracks = window.VehicleMotionTracks; // Alias for backward compatibility
+window.ProjMotionTracks = {};
+var _vehRawSegs = {};
+var _projRawSegs = {};
+
+function resetPreSimulatedTracks() {
+	window.VehicleMotionTracks = {};
+	window.JetFlightTracks = window.VehicleMotionTracks;
+	window.ProjMotionTracks = {};
+	_vehRawSegs = {};
+	_projRawSegs = {};
+}
+function resetJetFlightTracks() { resetPreSimulatedTracks(); }
+
+function _vehTrackBreakSegment(vehId) {
+	const rec = _vehRawSegs[vehId];
+	if (rec && rec.segs.length > 0 && rec.segs[rec.segs.length - 1].length > 0) {
+		rec.segs.push([]);
+	}
+}
+function _jetTrackBreakSegment(vehId) { _vehTrackBreakSegment(vehId); }
+
+function _vehTrackRecordSample(vehId, mode, vName, tSec, x, y, z, rot) {
+	if (vehId == null || !mode || isNaN(x) || isNaN(z)) return;
+	const py = (y != null && !isNaN(y)) ? y : 0;
+	const pRot = (rot != null && !isNaN(rot)) ? rot : 0;
+
+	let rec = _vehRawSegs[vehId];
+	if (!rec) {
+		rec = { mode: mode, name: (vName || "").toLowerCase(), segs: [[]] };
+		_vehRawSegs[vehId] = rec;
+	} else {
+		rec.mode = mode;
+		if (vName) rec.name = vName.toLowerCase();
+	}
+	let cur = rec.segs[rec.segs.length - 1];
+	const maxJump = (mode === "jet") ? 450.0 : ((mode === "heli") ? 200.0 : 90.0);
+	const maxGap = (mode === "ground") ? 4.0 : 3.0;
+
+	if (cur.length > 0) {
+		const last = cur[cur.length - 1];
+		const dt = tSec - last.t;
+		const dist = Math.hypot(x - last.x, z - last.z);
+		if (dist > maxJump || dt > maxGap || dt < -0.001) {
+			cur = [];
+			rec.segs.push(cur);
+		} else if (dt < 0.001) {
+			last.x = x; last.y = py; last.z = z; last.rot = pRot;
+			return;
+		}
+	}
+	cur.push({ t: tSec, x: x, y: py, z: z, rot: pRot });
+}
+function _jetTrackRecordSample(vehId, tSec, x, y, z, rot) {
+	_vehTrackRecordSample(vehId, "jet", "jet", tSec, x, y, z, rot);
+}
+
+function _projTrackRecordSample(projId, projType, tSec, x, y, z, yaw) {
+	// Skip stationary ground mines/C4/IEDs (types 1..6)
+	if (projId == null || (projType >= 1 && projType <= 6) || isNaN(x) || isNaN(z)) return;
+	const py = (y != null && !isNaN(y)) ? y : 0;
+	const pYaw = (yaw != null && !isNaN(yaw)) ? yaw : 0;
+
+	let segs = _projRawSegs[projId];
+	if (!segs) {
+		segs = [{ type: projType, pts: [], closed: false }];
+		_projRawSegs[projId] = segs;
+	}
+	let cur = segs[segs.length - 1];
+	if (cur.closed) {
+		cur = { type: projType, pts: [], closed: false };
+		segs.push(cur);
+	}
+	const pts = cur.pts;
+	if (pts.length > 0) {
+		const last = pts[pts.length - 1];
+		const dt = tSec - last.t;
+		if (dt > 2.5 || dt < -0.001) {
+			cur.closed = true;
+			cur = { type: projType, pts: [], closed: false };
+			segs.push(cur);
+		} else if (dt < 0.001) {
+			last.x = x; last.y = py; last.z = z; last.yaw = pYaw;
+			return;
+		}
+	}
+	cur.pts.push({ t: tSec, x: x, y: py, z: z, yaw: pYaw });
+}
+
+function _projTrackClose(projId) {
+	const segs = _projRawSegs[projId];
+	if (segs && segs.length > 0) {
+		segs[segs.length - 1].closed = true;
+	}
+}
+
+function _jetGaussianSmooth(times, vals, sigmaSec, lockEnds, sharpMask) {
+	const n = vals.length;
+	const out = new Float32Array(n);
+	if (n <= 2 || sigmaSec <= 0) {
+		for (let i = 0; i < n; i++) out[i] = vals[i];
+		return out;
+	}
+	const inv2Sig2 = 0.5 / (sigmaSec * sigmaSec);
+	const maxSpan = sigmaSec * 3.0;
+
+	for (let i = 0; i < n; i++) {
+		if ((lockEnds && (i === 0 || i === n - 1)) || (sharpMask && sharpMask[i])) {
+			out[i] = vals[i];
+			continue;
+		}
+		const ti = times[i];
+		let effSpan = maxSpan;
+		if (sharpMask) {
+			// Cap smoothing symmetrically to the nearest impact/crash boundary so pre-crash & post-crash never bias or smear!
+			for (let j = i - 1; j >= 0; j--) {
+				const dt = ti - times[j];
+				if (dt > effSpan) break;
+				if (sharpMask[j]) { effSpan = Math.min(effSpan, dt); break; }
+			}
+			for (let j = i + 1; j < n; j++) {
+				const dt = times[j] - ti;
+				if (dt > effSpan) break;
+				if (sharpMask[j]) { effSpan = Math.min(effSpan, dt); break; }
+			}
+		}
+		let wSum = 1.0;
+		let vSum = vals[i];
+		for (let j = i - 1; j >= 0; j--) {
+			const dt = ti - times[j];
+			if (dt > effSpan + 1e-4) break;
+			const w = Math.exp(-dt * dt * inv2Sig2);
+			wSum += w;
+			vSum += vals[j] * w;
+			if (sharpMask && sharpMask[j]) break;
+		}
+		for (let j = i + 1; j < n; j++) {
+			const dt = times[j] - ti;
+			if (dt > effSpan + 1e-4) break;
+			const w = Math.exp(-dt * dt * inv2Sig2);
+			wSum += w;
+			vSum += vals[j] * w;
+			if (sharpMask && sharpMask[j]) break;
+		}
+		out[i] = vSum / wSum;
+	}
+	return out;
+}
+
+function _jetEvalHermite(p0, p1, p2, p3, t0, t1, t2, t3, t, sharp1, sharp2) {
+	const h = t2 - t1;
+	if (h < 1e-5) return p2;
+	const u = Math.max(0.0, Math.min(1.0, (t - t1) / h));
+	const slope12 = (p2 - p1) / h;
+	const m1 = (!sharp1 && t1 > t0 + 1e-4) ? (0.5 * ((p1 - p0) / (t1 - t0) + slope12)) : slope12;
+	const m2 = (!sharp2 && t3 > t2 + 1e-4) ? (0.5 * (slope12 + (p3 - p2) / (t3 - t2))) : slope12;
+	const u2 = u * u;
+	const u3 = u2 * u;
+	return (2.0 * u3 - 3.0 * u2 + 1.0) * p1 +
+		(u3 - 2.0 * u2 + u) * (m1 * h) +
+		(-2.0 * u3 + 3.0 * u2) * p2 +
+		(u3 - u2) * (m2 * h);
+}
+
+function _computeCentralDeriv(times, vals, sharpMask) {
+	const n = vals.length;
+	const out = new Float32Array(n);
+	for (let i = 0; i < n; i++) {
+		const iA = (i > 0 && !(sharpMask && sharpMask[i])) ? (i - 1) : i;
+		const iB = (i < n - 1 && !(sharpMask && sharpMask[i])) ? (i + 1) : i;
+		const dt = times[iB] - times[iA];
+		if (dt > 1e-4) {
+			out[i] = (vals[iB] - vals[iA]) / dt;
+		} else if (i > 0 && times[i] > times[i - 1] + 1e-4) {
+			out[i] = (vals[i] - vals[i - 1]) / (times[i] - times[i - 1]);
+		}
+	}
+	return out;
+}
+
+function finalizePreSimulatedTracks() {
+	const vehTracks = {};
+	let vehSegCount = 0;
+
+	for (const vehId in _vehRawSegs) {
+		const rec = _vehRawSegs[vehId];
+		const mode = rec.mode;
+		const vName = rec.name || "";
+		const isHeavyArmor = /(?:^|_)(?:tnk|apc|ifv|aav)(?:_|$)|tank|bmp|btr|abrams|leopard|challenger|merkava/.test(vName);
+		const compiled = [];
+
+		for (let si = 0; si < rec.segs.length; si++) {
+			const raw = rec.segs[si];
+			const n = raw.length;
+			if (n < 3) continue;
+
+			const times = new Float32Array(n);
+			const rawX = new Float32Array(n);
+			const rawY = new Float32Array(n);
+			const rawZ = new Float32Array(n);
+			const rawYaw = new Float32Array(n);
+
+			for (let i = 0; i < n; i++) {
+				times[i] = raw[i].t;
+				rawX[i] = raw[i].x;
+				rawY[i] = raw[i].y;
+				rawZ[i] = raw[i].z;
+				if (i === 0) {
+					rawYaw[i] = raw[i].rot * Math.PI / 180.0;
+				} else {
+					const prevDeg = rawYaw[i - 1] * 180.0 / Math.PI;
+					const dDeg = (((raw[i].rot - prevDeg) % 360) + 540) % 360 - 180;
+					rawYaw[i] = rawYaw[i - 1] + dDeg * Math.PI / 180.0;
+				}
+			}
+
+			if (mode === "jet") {
+				// ---- JET: Zero-phase aerospace flight curve with rock-steady wings ----
+				const smX = _jetGaussianSmooth(times, rawX, 0.34, true, null);
+				const smY = _jetGaussianSmooth(times, rawY, 0.38, true, null);
+				const smZ = _jetGaussianSmooth(times, rawZ, 0.34, true, null);
+
+				const vx = _jetGaussianSmooth(times, _computeCentralDeriv(times, smX, null), 0.24, false, null);
+				const vy = _jetGaussianSmooth(times, _computeCentralDeriv(times, smY, null), 0.28, false, null);
+				const vz = _jetGaussianSmooth(times, _computeCentralDeriv(times, smZ, null), 0.24, false, null);
+
+				const yawUnwrapped = new Float32Array(n);
+				const vHorizArr = new Float32Array(n);
+				const spdBlendArr = new Float32Array(n);
+				for (let i = 0; i < n; i++) {
+					const vh = Math.hypot(vx[i], vz[i]);
+					vHorizArr[i] = vh;
+					const sb = Math.max(0.0, Math.min(1.0, (vh - 12.0) / 18.0));
+					spdBlendArr[i] = sb;
+					const targetRad = (sb > 0.5) ? Math.atan2(vx[i], vz[i]) : rawYaw[i];
+					if (i === 0) {
+						yawUnwrapped[i] = targetRad;
+					} else {
+						let d = targetRad - yawUnwrapped[i - 1];
+						while (d > Math.PI) d -= 2.0 * Math.PI;
+						while (d < -Math.PI) d += 2.0 * Math.PI;
+						yawUnwrapped[i] = yawUnwrapped[i - 1] + d;
+					}
+				}
+				const smYaw = _jetGaussianSmooth(times, yawUnwrapped, 0.22, false, null);
+
+				const pitchRaw = new Float32Array(n);
+				for (let i = 0; i < n; i++) {
+					pitchRaw[i] = Math.max(-0.96, Math.min(0.96, Math.atan2(vy[i], Math.max(18.0, vHorizArr[i])) * spdBlendArr[i]));
+				}
+				const smPitch = _jetGaussianSmooth(times, pitchRaw, 0.32, false, null);
+
+				const smOmega = _jetGaussianSmooth(times, _computeCentralDeriv(times, smYaw, null), 0.65, false, null);
+				const rollRaw = new Float32Array(n);
+				for (let i = 0; i < n; i++) {
+					const om = smOmega[i];
+					const omAbs = Math.abs(om);
+					const omEff = (omAbs > 0.025) ? (Math.sign(om) * (omAbs - 0.025)) : 0.0;
+					rollRaw[i] = Math.max(-1.10, Math.min(1.10, -Math.atan2(vHorizArr[i] * omEff, 11.5) * spdBlendArr[i]));
+				}
+				const smRoll = _jetGaussianSmooth(times, rollRaw, 0.36, false, null);
+
+				compiled.push({
+					mode: "jet", tStart: times[0], tEnd: times[n - 1],
+					t: times, x: smX, y: smY, z: smZ, yaw: smYaw, pitch: smPitch, roll: smRoll, sharp: null
+				});
+				vehSegCount++;
+			} else if (mode === "heli") {
+				// ---- HELICOPTER: Zero-phase smooth hover/cruise/J-hook flare & turn/strafe roll ----
+				const smX = _jetGaussianSmooth(times, rawX, 0.30, true, null);
+				const smY = _jetGaussianSmooth(times, rawY, 0.42, true, null);
+				const smZ = _jetGaussianSmooth(times, rawZ, 0.30, true, null);
+				const smYaw = _jetGaussianSmooth(times, rawYaw, 0.24, true, null);
+
+				const vx = _jetGaussianSmooth(times, _computeCentralDeriv(times, smX, null), 0.28, false, null);
+				const vz = _jetGaussianSmooth(times, _computeCentralDeriv(times, smZ, null), 0.28, false, null);
+				const ax = _jetGaussianSmooth(times, _computeCentralDeriv(times, vx, null), 0.45, false, null);
+				const az = _jetGaussianSmooth(times, _computeCentralDeriv(times, vz, null), 0.45, false, null);
+				const smOmega = _jetGaussianSmooth(times, _computeCentralDeriv(times, smYaw, null), 0.55, false, null);
+
+				const pitchRaw = new Float32Array(n);
+				const rollRaw = new Float32Array(n);
+				for (let i = 0; i < n; i++) {
+					const fX = Math.sin(smYaw[i]), fZ = Math.cos(smYaw[i]);
+					const rX = fZ, rZ = -fX;
+					const vFwd = vx[i] * fX + vz[i] * fZ;
+					const vRight = vx[i] * rX + vz[i] * rZ;
+					const vHoriz = Math.hypot(vx[i], vz[i]);
+					const aFwd = ax[i] * fX + az[i] * fZ;
+					const aLat = ax[i] * rX + az[i] * rZ;
+
+					// Pitch: gentle forward drag tilt + anticipatory accel/braking J-hook flare (never nosediving!)
+					const vFwdAbs = Math.abs(vFwd);
+					const vFwdEff = (vFwdAbs > 1.2) ? (Math.sign(vFwd) * (vFwdAbs - 1.2)) : 0.0;
+					const aFwdAbs = Math.abs(aFwd);
+					const aFwdEff = (aFwdAbs > 1.5) ? (Math.sign(aFwd) * (aFwdAbs - 1.5)) : 0.0;
+					const dragP = -Math.atan(vFwdEff / 55.0) * 0.24;
+					const accelP = -Math.atan(aFwdEff / 14.0) * 0.26;
+					pitchRaw[i] = Math.max(-0.30, Math.min(0.33, dragP + accelP));
+
+					// Roll: coordinated bank in turns + smooth sideways strafe tilt (rock-steady 0 deg in hover!)
+					const om = smOmega[i];
+					const omAbs = Math.abs(om);
+					const omEff = (omAbs > 0.03) ? (Math.sign(om) * (omAbs - 0.03)) : 0.0;
+					const turnR = (vHoriz > 4.0) ? (-Math.atan2(vHoriz * omEff, 14.5)) : 0.0;
+
+					const vRightAbs = Math.abs(vRight);
+					const vRightEff = (vRightAbs > 1.2) ? (Math.sign(vRight) * (vRightAbs - 1.2)) : 0.0;
+					const aLatAbs = Math.abs(aLat);
+					const aLatEff = (aLatAbs > 1.8) ? (Math.sign(aLat) * (aLatAbs - 1.8)) : 0.0;
+					const strafeR = -Math.atan(vRightEff / 20.0) * 0.24 - Math.atan(aLatEff / 16.0) * 0.22;
+					rollRaw[i] = Math.max(-0.61, Math.min(0.61, turnR + strafeR));
+				}
+
+				const smPitch = _jetGaussianSmooth(times, pitchRaw, 0.35, false, null);
+				const smRoll = _jetGaussianSmooth(times, rollRaw, 0.38, false, null);
+
+				compiled.push({
+					mode: "heli", tStart: times[0], tEnd: times[n - 1],
+					t: times, x: smX, y: smY, z: smZ, yaw: smYaw, pitch: smPitch, roll: smRoll, sharp: null
+				});
+				vehSegCount++;
+			} else {
+				// ---- GROUND VEHICLE: Impact/Collision-preserving smoothing + Suspension squat/dive/lean ----
+				// 1. Detect crashes, wall impacts, and sudden stops/reverses so two colliding cars NEVER smear through each other!
+				const sharp = new Uint8Array(n);
+				sharp[0] = 1;
+				sharp[n - 1] = 1;
+				for (let i = 1; i < n - 1; i++) {
+					const dtPrev = times[i] - times[i - 1];
+					const dtNext = times[i + 1] - times[i];
+					if (dtPrev < 1e-4 || dtNext < 1e-4) continue;
+					const vx1 = (rawX[i] - rawX[i - 1]) / dtPrev;
+					const vz1 = (rawZ[i] - rawZ[i - 1]) / dtPrev;
+					const vx2 = (rawX[i + 1] - rawX[i]) / dtNext;
+					const vz2 = (rawZ[i + 1] - rawZ[i]) / dtNext;
+					const dv = Math.hypot(vx2 - vx1, vz2 - vz1);
+					const spd1 = Math.hypot(vx1, vz1);
+					const spd2 = Math.hypot(vx2, vz2);
+					// Sharp impact / crash / abrupt stop or collision rebound
+					if (dv > 7.5 || (spd1 > 7.0 && spd2 < 1.5)) {
+						sharp[i] = 1;
+					}
+				}
+
+				// 2. Short impact-preserving Gaussian on X, Z, Yaw (eliminates 1m accel/decel micro-stutter without cutting corners!)
+				const smX = _jetGaussianSmooth(times, rawX, 0.16, true, sharp);
+				const smZ = _jetGaussianSmooth(times, rawZ, 0.16, true, sharp);
+				const smYaw = _jetGaussianSmooth(times, rawYaw, 0.14, true, sharp);
+
+				// 3. Subtle suspension dynamics (squat on acceleration, nose-dive on braking/crash, outward chassis lean in turns)
+				const vx = _jetGaussianSmooth(times, _computeCentralDeriv(times, smX, sharp), 0.18, false, sharp);
+				const vz = _jetGaussianSmooth(times, _computeCentralDeriv(times, smZ, sharp), 0.18, false, sharp);
+				const ax = _jetGaussianSmooth(times, _computeCentralDeriv(times, vx, sharp), 0.22, false, null);
+				const az = _jetGaussianSmooth(times, _computeCentralDeriv(times, vz, sharp), 0.22, false, null);
+				const om = _jetGaussianSmooth(times, _computeCentralDeriv(times, smYaw, sharp), 0.25, false, null);
+
+				// Tanks/APCs have stiffer torsion-bar suspension than jeeps/trucks
+				const pitchGain = isHeavyArmor ? 0.045 : 0.085;
+				const rollGain = isHeavyArmor ? 0.035 : 0.095;
+				const maxSuspPitch = isHeavyArmor ? 0.055 : 0.095; // ~3.1 deg tank, ~5.4 deg truck/jeep
+				const maxSuspRoll = isHeavyArmor ? 0.045 : 0.110;  // ~2.6 deg tank, ~6.3 deg truck/jeep
+
+				const suspPitchRaw = new Float32Array(n);
+				const suspRollRaw = new Float32Array(n);
+				for (let i = 0; i < n; i++) {
+					const fX = Math.sin(smYaw[i]), fZ = Math.cos(smYaw[i]);
+					const vHoriz = Math.hypot(vx[i], vz[i]);
+					const aFwd = ax[i] * fX + az[i] * fZ;
+					const aAbs = Math.abs(aFwd);
+					const aEff = (aAbs > 1.8) ? (Math.sign(aFwd) * (aAbs - 1.8)) : 0.0;
+					// Positive aFwd (accelerating) -> nose lifts (+pitch squat); negative aFwd (braking/crash) -> nose dips (-pitch dive)
+					suspPitchRaw[i] = Math.max(-maxSuspPitch, Math.min(maxSuspPitch, Math.atan(aEff / 10.0) * pitchGain));
+
+					// Ground vehicle body rolls OUTWARD in a turn (opposite of aircraft bank!)
+					const latAccel = (vHoriz > 2.5) ? (vHoriz * om[i]) : 0.0;
+					const latAbs = Math.abs(latAccel);
+					const latEff = (latAbs > 1.2) ? (Math.sign(latAccel) * (latAbs - 1.2)) : 0.0;
+					// Turning right (om > 0) -> body leans left -> right side rises -> +roll
+					suspRollRaw[i] = Math.max(-maxSuspRoll, Math.min(maxSuspRoll, Math.atan(latEff / 12.0) * rollGain));
+				}
+
+				const smSuspPitch = _jetGaussianSmooth(times, suspPitchRaw, 0.20, false, null);
+				const smSuspRoll = _jetGaussianSmooth(times, suspRollRaw, 0.22, false, null);
+
+				compiled.push({
+					mode: "ground", tStart: times[0], tEnd: times[n - 1],
+					t: times, x: smX, y: rawY, z: smZ, yaw: smYaw, pitch: smSuspPitch, roll: smSuspRoll, sharp: sharp
+				});
+				vehSegCount++;
+			}
+		}
+
+		if (compiled.length > 0) {
+			vehTracks[vehId] = compiled;
+		}
+	}
+
+	// ---- PROJECTILES: Smooth 3D parabolic / ATGM / mortar arcs with real 3D pitch & yaw ----
+	const projTracks = {};
+	let projSegCount = 0;
+	for (const projId in _projRawSegs) {
+		const rawSegs = _projRawSegs[projId];
+		const compiled = [];
+		for (let si = 0; si < rawSegs.length; si++) {
+			const pts = rawSegs[si].pts;
+			const n = pts.length;
+			if (n < 2) continue;
+
+			const times = new Float32Array(n);
+			const rawX = new Float32Array(n);
+			const rawY = new Float32Array(n);
+			const rawZ = new Float32Array(n);
+			const rawYaw = new Float32Array(n);
+			for (let i = 0; i < n; i++) {
+				times[i] = pts[i].t;
+				rawX[i] = pts[i].x;
+				rawY[i] = pts[i].y;
+				rawZ[i] = pts[i].z;
+				rawYaw[i] = pts[i].yaw * Math.PI / 180.0;
+			}
+
+			// Lock exact launch & impact endpoints; gently smooth intermediate Int16 points
+			const smX = (n >= 4) ? _jetGaussianSmooth(times, rawX, 0.12, true, null) : rawX;
+			const smY = (n >= 4) ? _jetGaussianSmooth(times, rawY, 0.14, true, null) : rawY;
+			const smZ = (n >= 4) ? _jetGaussianSmooth(times, rawZ, 0.12, true, null) : rawZ;
+
+			const vx = _computeCentralDeriv(times, smX, null);
+			const vy = _computeCentralDeriv(times, smY, null);
+			const vz = _computeCentralDeriv(times, smZ, null);
+
+			const yawArr = new Float32Array(n);
+			const pitchArr = new Float32Array(n);
+			for (let i = 0; i < n; i++) {
+				const vh = Math.hypot(vx[i], vz[i]);
+				const targetYaw = (vh > 3.0) ? Math.atan2(vx[i], vz[i]) : rawYaw[i];
+				if (i === 0) {
+					yawArr[i] = targetYaw;
+				} else {
+					let d = targetYaw - yawArr[i - 1];
+					while (d > Math.PI) d -= 2.0 * Math.PI;
+					while (d < -Math.PI) d += 2.0 * Math.PI;
+					yawArr[i] = yawArr[i - 1] + d;
+				}
+				pitchArr[i] = (vh > 1.5 || Math.abs(vy[i]) > 1.5)
+					? Math.max(-1.45, Math.min(1.45, Math.atan2(vy[i], Math.max(0.5, vh))))
+					: 0.0;
+			}
+
+			compiled.push({
+				tStart: times[0], tEnd: times[n - 1],
+				t: times, x: smX, y: smY, z: smZ, yaw: yawArr, pitch: pitchArr
+			});
+			projSegCount++;
+		}
+		if (compiled.length > 0) {
+			projTracks[projId] = compiled;
+		}
+	}
+
+	window.VehicleMotionTracks = vehTracks;
+	window.JetFlightTracks = vehTracks;
+	window.ProjMotionTracks = projTracks;
+	_vehRawSegs = {};
+	_projRawSegs = {};
+	return { vehSegs: vehSegCount, projSegs: projSegCount };
+}
+function finalizeJetFlightTracks() { return finalizePreSimulatedTracks().vehSegs; }
+
+window.sampleVehicleTrack = function(vehId, timeSec) {
+	const tracks = window.VehicleMotionTracks;
+	if (!tracks) return null;
+	const segs = tracks[vehId];
+	if (!segs || segs.length === 0) return null;
+
+	let seg = null;
+	for (let s = 0; s < segs.length; s++) {
+		const cand = segs[s];
+		if (timeSec >= cand.tStart - 0.35 && timeSec <= cand.tEnd + 0.35) {
+			seg = cand;
+			break;
+		}
+	}
+	if (!seg) return null;
+
+	const times = seg.t;
+	const n = times.length;
+	const tClamped = Math.max(seg.tStart, Math.min(seg.tEnd, timeSec));
+
+	let lo = 0;
+	let hi = n - 2;
+	while (lo < hi) {
+		const mid = (lo + hi + 1) >> 1;
+		if (times[mid] <= tClamped) lo = mid;
+		else hi = mid - 1;
+	}
+	const i1 = lo;
+	const i0 = Math.max(0, i1 - 1);
+	const i2 = Math.min(n - 1, i1 + 1);
+	const i3 = Math.min(n - 1, i1 + 2);
+	const t0 = times[i0], t1 = times[i1], t2 = times[i2], t3 = times[i3];
+	const sh = seg.sharp;
+	const s1 = sh ? !!sh[i1] : false;
+	const s2 = sh ? !!sh[i2] : false;
+
+	const x = _jetEvalHermite(seg.x[i0], seg.x[i1], seg.x[i2], seg.x[i3], t0, t1, t2, t3, tClamped, s1, s2);
+	const y = _jetEvalHermite(seg.y[i0], seg.y[i1], seg.y[i2], seg.y[i3], t0, t1, t2, t3, tClamped, s1, s2);
+	const z = _jetEvalHermite(seg.z[i0], seg.z[i1], seg.z[i2], seg.z[i3], t0, t1, t2, t3, tClamped, s1, s2);
+	const yawRad = _jetEvalHermite(seg.yaw[i0], seg.yaw[i1], seg.yaw[i2], seg.yaw[i3], t0, t1, t2, t3, tClamped, s1, s2);
+	const pitch = _jetEvalHermite(seg.pitch[i0], seg.pitch[i1], seg.pitch[i2], seg.pitch[i3], t0, t1, t2, t3, tClamped, false, false);
+	const roll = _jetEvalHermite(seg.roll[i0], seg.roll[i1], seg.roll[i2], seg.roll[i3], t0, t1, t2, t3, tClamped, false, false);
+
+	return {
+		mode: seg.mode,
+		x: x,
+		y: y,
+		z: z,
+		yawDeg: ((yawRad * 180.0 / Math.PI) % 360 + 360) % 360,
+		pitch: pitch,
+		roll: roll
+	};
+};
+window.sampleJetFlightTrack = window.sampleVehicleTrack;
+
+window.sampleProjTrack = function(projId, timeSec) {
+	const tracks = window.ProjMotionTracks;
+	if (!tracks) return null;
+	const segs = tracks[projId];
+	if (!segs || segs.length === 0) return null;
+
+	let seg = null;
+	for (let s = 0; s < segs.length; s++) {
+		const cand = segs[s];
+		if (timeSec >= cand.tStart - 0.30 && timeSec <= cand.tEnd + 0.30) {
+			seg = cand;
+			break;
+		}
+	}
+	if (!seg) return null;
+
+	const times = seg.t;
+	const n = times.length;
+	const tClamped = Math.max(seg.tStart, Math.min(seg.tEnd, timeSec));
+
+	let lo = 0;
+	let hi = n - 2;
+	while (lo < hi) {
+		const mid = (lo + hi + 1) >> 1;
+		if (times[mid] <= tClamped) lo = mid;
+		else hi = mid - 1;
+	}
+	const i1 = lo;
+	const i0 = Math.max(0, i1 - 1);
+	const i2 = Math.min(n - 1, i1 + 1);
+	const i3 = Math.min(n - 1, i1 + 2);
+	const t0 = times[i0], t1 = times[i1], t2 = times[i2], t3 = times[i3];
+
+	const x = _jetEvalHermite(seg.x[i0], seg.x[i1], seg.x[i2], seg.x[i3], t0, t1, t2, t3, tClamped, false, false);
+	const y = _jetEvalHermite(seg.y[i0], seg.y[i1], seg.y[i2], seg.y[i3], t0, t1, t2, t3, tClamped, false, false);
+	const z = _jetEvalHermite(seg.z[i0], seg.z[i1], seg.z[i2], seg.z[i3], t0, t1, t2, t3, tClamped, false, false);
+	const yawRad = _jetEvalHermite(seg.yaw[i0], seg.yaw[i1], seg.yaw[i2], seg.yaw[i3], t0, t1, t2, t3, tClamped, false, false);
+	const pitch = _jetEvalHermite(seg.pitch[i0], seg.pitch[i1], seg.pitch[i2], seg.pitch[i3], t0, t1, t2, t3, tClamped, false, false);
+
+	return {
+		x: x,
+		y: y,
+		z: z,
+		yawDeg: ((yawRad * 180.0 / Math.PI) % 360 + 360) % 360,
+		pitch: pitch,
+		tStart: seg.tStart,
+		tEnd: seg.tEnd
+	};
+};
 
 var messageHandlers = []
 $(() =>

@@ -142,6 +142,8 @@ class TerrainRenderer extends Initializable {
             uniform mat4 uLightSpaceMatrix;
             uniform sampler2DShadow uShadowMap;
             uniform int uUseShadows;
+            uniform vec3 uSunDir;
+            uniform int uUsePrReflections;
 
             out vec4 fragColor;
 
@@ -168,14 +170,33 @@ class TerrainRenderer extends Initializable {
               return mix(1.0, s, edgeFade);
             }
 
+            float hash21(vec2 p) {
+              p = fract(p * vec2(123.34, 456.21));
+              p += dot(p, p + 45.32);
+              return fract(p.x * p.y);
+            }
+
+            float valueNoise(vec2 p) {
+              vec2 i = floor(p);
+              vec2 f = fract(p);
+              vec2 u = f * f * (3.0 - 2.0 * f);
+              float a = hash21(i);
+              float b = hash21(i + vec2(1.0, 0.0));
+              float c = hash21(i + vec2(0.0, 1.0));
+              float d = hash21(i + vec2(1.0, 1.0));
+              return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
+            }
+
             void main() {
               vec4 baseColor = texture(uSampler, vTextureCoord);
 
+              float detailLuma = 0.5;
+              float detailWeight = 0.0;
               if (uUseDetail == 1) {
                 vec2 uvDx = dFdx(vTextureCoord);
                 vec2 uvDy = dFdy(vTextureCoord);
                 float dist = distance(vWorldPos, uCameraPos);
-                float detailFade = 1.0 - smoothstep(140.0, 440.0, dist);
+                float detailFade = 1.0 - smoothstep(140.0, 460.0, dist);
                 if (detailFade > 0.004) {
                   vec3 splat0 = texture(uSplatArray, vec3(vTextureCoord, 0.0)).rgb;
                   vec3 splat1 = texture(uSplatArray, vec3(vTextureCoord, 1.0)).rgb;
@@ -187,6 +208,15 @@ class TerrainRenderer extends Initializable {
                   w[4] = splat1.g;
                   w[5] = splat1.b;
 
+                  // Dual-octave anti-tiling: rotate second octave by ~37 deg at irrational scale 0.29
+                  const mat2 rotMat = mat2(0.7986355, -0.6018150, 0.6018150, 0.7986355);
+                  const float macroScale = 0.29;
+                  vec2 rotUv = rotMat * vTextureCoord;
+                  vec2 rotDx = rotMat * uvDx;
+                  vec2 rotDy = rotMat * uvDy;
+                  // Favor fine detail up close, shift smoothly toward rotated macro octave at mid-range
+                  float macroMix = mix(0.32, 0.62, smoothstep(25.0, 180.0, dist));
+
                   vec3 accumDetail = vec3(0.0);
                   float weightSum = 0.0;
                   for (int i = 0; i < 6; i++) {
@@ -194,22 +224,67 @@ class TerrainRenderer extends Initializable {
                     float wi = w[i];
                     if ((uActiveMask & bit) != 0 && wi > 0.01) {
                       float rep = uLayerRepeats[i];
-                      vec3 d = textureGrad(
+                      vec3 dFine = textureGrad(
                         uDetailArray,
                         vec3(vTextureCoord * rep, float(i)),
                         uvDx * rep,
                         uvDy * rep
                       ).rgb;
+                      float repM = rep * macroScale;
+                      vec3 dMacro = textureGrad(
+                        uDetailArray,
+                        vec3(rotUv * repM, float(i)),
+                        rotDx * repM,
+                        rotDy * repM
+                      ).rgb;
+                      vec3 d = mix(dFine, dMacro, macroMix);
                       accumDetail += d * wi;
                       weightSum += wi;
                     }
                   }
                   if (weightSum > 0.01) {
                     vec3 blendedDetail = accumDetail / weightSum;
-                    vec3 modulated = clamp(baseColor.rgb * (blendedDetail * 2.0), 0.0, 1.0);
+                    detailLuma = dot(blendedDetail, vec3(0.299, 0.587, 0.114));
+                    detailWeight = detailFade;
+                    // Subtle low-frequency procedural variation (40m-110m) breaks up flat plains
+                    float nMacro = valueNoise(vWorldPos.xz * 0.014) * 0.65 + valueNoise(vWorldPos.xz * 0.037 + 13.7) * 0.35;
+                    float macroVar = mix(0.955, 1.045, nMacro);
+                    vec3 modulated = clamp(baseColor.rgb * (blendedDetail * 2.0) * macroVar, 0.0, 1.0);
                     baseColor.rgb = mix(baseColor.rgb, modulated, detailFade);
                   }
                 }
+              }
+
+              if (uUsePrReflections == 1) {
+                vec3 dpx = dFdx(vWorldPos);
+                vec3 dpy = dFdy(vWorldPos);
+                vec3 tNorm = cross(dpx, dpy);
+                float tLen = length(tNorm);
+                tNorm = (tLen > 1e-5) ? (tNorm / tLen) : vec3(0.0, 1.0, 0.0);
+                if (tNorm.y < 0.0) tNorm = -tNorm;
+
+                // Subtle micro-relief shading from detail texture derivatives (TerrainShader_Shared.fxh style)
+                if (detailWeight > 0.01) {
+                  float dlx = dFdx(detailLuma);
+                  float dly = dFdy(detailLuma);
+                  vec3 microBump = normalize(vec3(-dlx * 3.5, 1.0, -dly * 3.5));
+                  tNorm = normalize(mix(tNorm, normalize(tNorm + vec3(microBump.x, 0.0, microBump.z) * 0.45), detailWeight));
+                }
+
+                vec3 sunDir = normalize(uSunDir);
+                float halfNL = dot(tNorm, sunDir) * 0.5 + 0.5;
+                float slopeShade = mix(0.90, 1.10, halfNL * halfNL);
+                baseColor.rgb *= slopeShade;
+
+                // Grazing sun-slope sheen on ridges & damp soil
+                vec3 V = normalize(uCameraPos - vWorldPos);
+                vec3 H = normalize(sunDir + V);
+                float fres = pow(1.0 - max(dot(tNorm, V), 0.0), 4.0);
+                float spec = pow(max(dot(tNorm, H), 0.0), 18.0) * max(dot(tNorm, sunDir), 0.0);
+                float lumaBase = dot(baseColor.rgb, vec3(0.299, 0.587, 0.114));
+                baseColor.rgb += vec3(0.98, 0.94, 0.85) * (spec * 0.09 * smoothstep(0.12, 0.55, lumaBase));
+                baseColor.rgb += vec3(0.55, 0.65, 0.78) * (fres * 0.055 * (0.4 + 0.6 * lumaBase));
+                baseColor.rgb = clamp(baseColor.rgb, 0.0, 1.0);
               }
 
               if (uUseShadows == 1) {
@@ -262,6 +337,8 @@ class TerrainRenderer extends Initializable {
         this.gpu_uLightSpaceMatrix = gl.getUniformLocation(terrainProgram, 'uLightSpaceMatrix');
         this.gpu_uShadowMap = gl.getUniformLocation(terrainProgram, 'uShadowMap');
         this.gpu_uUseShadows = gl.getUniformLocation(terrainProgram, 'uUseShadows');
+        this.gpu_uSunDir = gl.getUniformLocation(terrainProgram, 'uSunDir');
+        this.gpu_uUsePrReflections = gl.getUniformLocation(terrainProgram, 'uUsePrReflections');
 
         console.log("TERRAIN: Compiled terrain shaders");
     }
@@ -311,7 +388,7 @@ class TerrainRenderer extends Initializable {
                 || gl.getExtension("WEBKIT_EXT_texture_filter_anisotropic");
             if (ext) {
                 const maxAniso = gl.getParameter(ext.MAX_TEXTURE_MAX_ANISOTROPY_EXT) || 1;
-                gl.texParameterf(gl.TEXTURE_2D, ext.TEXTURE_MAX_ANISOTROPY_EXT, Math.min(8, maxAniso));
+                gl.texParameterf(gl.TEXTURE_2D, ext.TEXTURE_MAX_ANISOTROPY_EXT, Math.min(16, maxAniso));
             }
         }
     }
@@ -599,7 +676,7 @@ class TerrainRenderer extends Initializable {
             || gl.getExtension('WEBKIT_EXT_texture_filter_anisotropic');
         if (anisoExt) {
             const maxAniso = gl.getParameter(anisoExt.MAX_TEXTURE_MAX_ANISOTROPY_EXT);
-            gl.texParameterf(gl.TEXTURE_2D_ARRAY, anisoExt.TEXTURE_MAX_ANISOTROPY_EXT, Math.min(8.0, maxAniso));
+            gl.texParameterf(gl.TEXTURE_2D_ARRAY, anisoExt.TEXTURE_MAX_ANISOTROPY_EXT, Math.min(16.0, maxAniso));
         }
         gl.generateMipmap(gl.TEXTURE_2D_ARRAY);
         gl.bindTexture(gl.TEXTURE_2D_ARRAY, null);
@@ -659,10 +736,16 @@ class TerrainRenderer extends Initializable {
         const useDetail = this.usingRealTerrain
             && this.detailReady
             && (typeof options_TerrainDetail === "undefined" || options_TerrainDetail);
+        const usePrRefl = (typeof options_3dPrReflections !== "undefined" && !!options_3dPrReflections) ? 1 : 0;
+        const cam = renderer3d.cameraPos;
+        gl.uniform3f(this.gpu_uCameraPos, cam[0], cam[1], cam[2]);
         gl.uniform1i(this.gpu_uUseDetail, useDetail ? 1 : 0);
+        if (this.gpu_uUsePrReflections !== null) gl.uniform1i(this.gpu_uUsePrReflections, usePrRefl);
+        if (this.gpu_uSunDir !== null) {
+            const sunDir = (typeof renderer3d.getMapSunDirection === "function") ? renderer3d.getMapSunDirection() : [0.4508, 0.8515, -0.3005];
+            gl.uniform3f(this.gpu_uSunDir, sunDir[0], sunDir[1], sunDir[2]);
+        }
         if (useDetail) {
-            const cam = renderer3d.cameraPos;
-            gl.uniform3f(this.gpu_uCameraPos, cam[0], cam[1], cam[2]);
             gl.uniform1fv(this.gpu_uLayerRepeats, this.detailLayerRepeats);
             gl.uniform1i(this.gpu_uActiveMask, this.detailActiveMask);
         }

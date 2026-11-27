@@ -77,11 +77,14 @@ function getEntitySpeedKmh(entity) {
 		}
 
 		const dt = newest.time - targetSample.time;
-		const distM = Math.hypot(newest.x - targetSample.x, newest.z - targetSample.z);
+		const dxM = newest.x - targetSample.x;
+		const dzM = newest.z - targetSample.z;
+		const dyM = (isVehicle && entity.isFlyingVehicle) ? ((newest.y || 0) - (targetSample.y || 0)) : 0;
+		const distM = Math.hypot(dxM, dyM, dzM);
 
-		// Teleport / Respawn check
-		if ((isPlayer && (!entity.vehicleid || entity.vehicleid < 0) && distM > 15.0) ||
-			(isVehicle && distM > 150.0)) {
+		// Teleport / Respawn check (speed-based for vehicles so fast PR jets at 700-1400 km/h don't reset to 0!)
+		const vehTeleport = isVehicle && (dt > 0.05 ? ((distM / dt) > 550.0) : (distM > 600.0));
+		if ((isPlayer && (!entity.vehicleid || entity.vehicleid < 0) && distM > 15.0) || vehTeleport) {
 			entity.ns_smoothedSpeedKmh = 0;
 			entity.ns_stance = "stationary";
 			return 0;
@@ -344,6 +347,40 @@ function drawMovementSoundAuras() {
 	}
 }
 
+function getVehicleAcousticProfile(v) {
+	const vName = ((v && v.name) ? v.name : "").toLowerCase();
+	const isStationary = (v && v.ns_isStationaryWeapon) ||
+		vName.startsWith("deployable_") || vName.startsWith("fixed_") || vName.startsWith("stationary_") ||
+		vName.endsWith("_stationary") || vName.startsWith("aa_") || vName.startsWith("aaa_") ||
+		vName.startsWith("sam_") || vName.startsWith("ushmg_") || vName.startsWith("2cm_flak") ||
+		vName.startsWith("88mm_flak") || vName === "zis3" || vName === "pak36" || vName === "pak40" ||
+		vName === "zpu4" || vName === "ammo_drop" || vName.includes("ats_") || vName.includes("aas_") ||
+		vName.includes("zu23") || vName.includes("djigit") || vName.includes("bipod") ||
+		vName.includes("bunker") || vName.includes("sandbag") || vName.includes("razorwire") ||
+		vName.includes("roadblock") || vName.includes("_csb_") || vName.includes("commandpost") ||
+		vName.includes("firebase") || vName.includes("hideout") || vName.includes("vehicle_depot") ||
+		vName.includes("crate") || vName.includes("_tent") || vName.includes("parachute") ||
+		vName.includes("ladder") || vName.includes("grappling") ||
+		(typeof isUAVVehicle === "function" && isUAVVehicle(vName));
+
+	if (isStationary) {
+		return { hasEngine: false, moveRadius: 0, idleRadius: 0, opticOffset: 1.5, category: "stationary" };
+	}
+	if (vName.includes("_jet_")) {
+		return { hasEngine: true, moveRadius: 1200, idleRadius: 400, opticOffset: 2.0, category: "jet" };
+	}
+	if (vName.includes("_the_") || vName.includes("_ahe_") || vName.includes("heli") || vName.includes("uh60") || vName.includes("mi8") || vName.includes("ah1z")) {
+		return { hasEngine: true, moveRadius: 800, idleRadius: 300, opticOffset: 1.8, category: "heli" };
+	}
+	if (vName.includes("_tnk_") || vName.includes("tnk") || vName.includes("tank") ||
+		vName.includes("_ifv_") || vName.includes("_apc_") || vName.includes("apc") ||
+		vName.includes("_aav_") || vName.includes("_atm_") || vName.includes("_acv_") ||
+		vName.includes("_rec_") || vName.includes("bmp") || vName.includes("btr")) {
+		return { hasEngine: true, moveRadius: 450, idleRadius: 100, opticOffset: 2.4, category: "heavy" };
+	}
+	return { hasEngine: true, moveRadius: 250, idleRadius: 60, opticOffset: 1.7, category: "light" };
+}
+
 function drawSingleVehicleEngineAura(v) {
 	if (!v || v.Passengers == null) return;
 	const vx = v.getX();
@@ -369,16 +406,14 @@ function drawSingleVehicleEngineAura(v) {
 	}
 
 	const spdKmh = getEntitySpeedKmh(v);
-	const vName = (v.name || "").toLowerCase();
-	const isHeavy = vName.includes("tnk") || vName.includes("tank") || vName.includes("apc") || vName.includes("bmp") || vName.includes("btr");
-	const isHeli = vName.includes("heli") || vName.includes("uh60") || vName.includes("mi8") || vName.includes("ah1z");
+	const prof = getVehicleAcousticProfile(v);
 
 	let targetEngineRadiusM = 0;
 	let targetOpacity = 0.0;
 	let statusText = "";
 
-	if (hasDriver) {
-		targetEngineRadiusM = spdKmh >= 2.0 ? (isHeli ? 800 : isHeavy ? 450 : 250) : (isHeli ? 300 : isHeavy ? 100 : 60);
+	if (hasDriver && prof.hasEngine) {
+		targetEngineRadiusM = spdKmh >= 2.0 ? prof.moveRadius : prof.idleRadius;
 		targetOpacity = spdKmh >= 2.0 ? 0.50 : 0.25;
 		statusText = spdKmh >= 2.0 ? `Driving (${spdKmh.toFixed(0)}km/h - ${targetEngineRadiusM}m)` : `Engine Idle (${targetEngineRadiusM}m)`;
 	}
@@ -501,8 +536,8 @@ function getPlayerWorldPos(p) {
 		const vRot = typeof v.getRotation === "function" ? v.getRotation() : (v.rotation || 0);
 		const pRot = typeof p.getRotation === "function" ? p.getRotation() : (p.rotation || 0);
 
-		// If driver or unrotated gunner, follow vehicle rotation; otherwise use gunner rotation
-		const rot = (p.vehicleSlot === 0 || p.rotation == null || p.rotation === 0) ? vRot : pRot;
+		// If driver or gunner rotation is unavailable, follow vehicle rotation; otherwise use gunner rotation (including 0 deg North)
+		const rot = (p.vehicleSlot === 0 || p.rotation == null || isNaN(p.rotation) || (typeof gunnerRotationSupported !== "undefined" && !gunnerRotationSupported)) ? vRot : pRot;
 		return { x: vx, y: vy, z: vz, rot: rot };
 	}
 	return {
@@ -1532,6 +1567,7 @@ var ANALYSER_I18N = {
 		mode2dToast: "2D Map",
 		mode3dFreeToast: "3D Free Camera",
 		mode3dTopToast: "3D Top-Down",
+		fpvNoTargetToast: "Select a player or vehicle first for 1PV",
 		copyLinkTitle: "Copy link with timestamp",
 		bookmarksTitle: "Bookmarks",
 		menuMapTitle: "Map & HUD Options",
@@ -1548,6 +1584,8 @@ var ANALYSER_I18N = {
 		sec3dTerrain: "Terrain & Sky",
 		sec3dStructures: "Structures & Units",
 		sec3dLighting: "Lighting & Shadows",
+		sec3dEnvironment: "Environment & Effects",
+		sec3dPostProcess: "Post-Processing",
 		ssaoQualTitle: "AO Quality",
 		ssaoQualTip: "Controls SSAO resolution and sample count. Full-res Balanced/High gives much sharper contact shadows.",
 		aaTitle: "Anti-Aliasing",
@@ -1639,6 +1677,7 @@ var ANALYSER_I18N = {
 			options_UseFallbackRenderer: { label: "Classic 2D Map", title: "Uses the legacy single-image 2D map instead of tiled zoom atlas." },
 			options_RealTerrain: { label: "Terrain Textures", title: "Uses baked 3D lighting & colormap terrain textures instead of the 2D minimap." },
 			options_TerrainDetail: { label: "Ground Detail Textures", title: "Requires Terrain Textures. Adds close-range high-res ground detail." },
+			options_3dRoads: { label: "Roads & Paths", title: "Renders authentic Project Reality compiled 3D roads, highways, and dirt paths hugging the terrain (81 maps)." },
 			options_DrawSkybox: { label: "Sky Dome", title: "Renders the map and layer's authentic atmospheric sky dome (day, night, overcast, or storm) blended with horizon fog." },
 			options_3dFog: { label: "Fog", title: "Applies Project Reality distance fog matching each map and layer preset." },
 			options_3dFogOnPlayer: { label: "Center Fog on Player", title: "Requires Fog. Centers the fog visibility sphere on the selected player instead of the camera so you can see their exact visibility radius." },
@@ -1648,8 +1687,13 @@ var ANALYSER_I18N = {
 			options_BushTextures: { label: "Detailed Bushes", title: "Renders authentic PR textured bushes when close, instead of lightweight volumetric bushes." },
 			options_StructureColors: { label: "Color by Building Type", title: "Assigns each building template a consistent distinct color. When Building Textures is ON, tints textures with that color." },
 			options_FactionTextures: { label: "Soldier & Vehicle Textures", title: "Loads authentic PR faction soldier & vehicle textures in 3D." },
+			options_PredictiveEquipment: { label: "Predictive Equipment Actions", title: "Anticipates and displays secondary 3P equipment (EpiPen, Medikit, Field Dressing, Shovel, AT/AA Launchers, Grenades, Mines, Ammo Bag) before and during actions." },
 			options_3dShadows: { label: "Dynamic Shadows", title: "Real-time directional sun shadows aligned with each map's sun direction." },
 			options_3dAoSsao: { label: "Ambient Occlusion", title: "Combines baked building Vertex AO with real-time screen-space ambient occlusion (SSAO)." },
+			options_3dPrReflections: { label: "PR Reflections & Relief", title: "Adds Project Reality specular highlights, sky Fresnel rim reflections on vehicles & structures, and directional sun-slope relief on terrain." },
+			options_3dWind: { label: "Vegetation Wind", title: "Animates gentle wind sway on tree canopies and bushes (PR RaShaderLeaf / Undergrowth)." },
+			options_3dWeather: { label: "Weather Effects (Rain / Snow)", title: "Renders authentic PR rain, snow, or blizzard particles ONLY on the exact maps and layers that have precipitation in Project Reality." },
+			options_3dBloom: { label: "Bloom & Sun Glare", title: "Adds PR-style selective bloom on afterburners, explosions & bright highlights, atmospheric sun glare, and subtle filmic tone mapping." },
 			options_DrawVisionCone: {
 				label: "Vision Cone",
 				title: "Draws the selected player's field of view cone (94.9 deg horizontal FOV), calibrated to the map's visibility distance and respecting fog in 3D."
@@ -1694,6 +1738,10 @@ var ANALYSER_I18N = {
 				label: "Follow Selected [T]",
 				title: "Smoothly follows the selected player or vehicle with the camera in 2D and 3D. Press 'T' to toggle."
 			},
+			options_FirstPersonView: {
+				label: "First-Person View [F]",
+				title: "Switches to 3D First-Person View from the selected soldier's eyes or vehicle seat. Press 'F' to toggle, '[' / ']' to cycle crew."
+			},
 			options_DrawBuildingWireframes: {
 				label: "Building Outlines",
 				title: "Shows 2D vector outlines of buildings and walls extracted from the game's 3D collision meshes."
@@ -1725,6 +1773,7 @@ var ANALYSER_I18N = {
 		mode2dToast: "Mapa 2D",
 		mode3dFreeToast: "C\u00e1mara Libre 3D",
 		mode3dTopToast: "Vista Cenital 3D",
+		fpvNoTargetToast: "Selecciona primero un jugador o veh\u00edculo para 1PV",
 		copyLinkTitle: "Copiar enlace con marca de tiempo",
 		bookmarksTitle: "Marcadores",
 		menuMapTitle: "Opciones de Mapa y HUD",
@@ -1741,6 +1790,8 @@ var ANALYSER_I18N = {
 		sec3dTerrain: "Terreno y Cielo",
 		sec3dStructures: "Estructuras y Unidades",
 		sec3dLighting: "Iluminaci\u00f3n y Sombras",
+		sec3dEnvironment: "Ambiente y Efectos",
+		sec3dPostProcess: "Post-Proceso",
 		ssaoQualTitle: "Calidad de AO",
 		ssaoQualTip: "Controla la resoluci\u00f3n y muestras de SSAO. En Balanced/High (resoluci\u00f3n completa) elimina el difuminado en sombras de contacto.",
 		aaTitle: "Anti-Aliasing",
@@ -1832,6 +1883,7 @@ var ANALYSER_I18N = {
 			options_UseFallbackRenderer: { label: "Mapa 2D Cl\u00e1sico", title: "Usa el mapa 2D cl\u00e1sico de imagen \u00fanica en lugar del atlas de tiles." },
 			options_RealTerrain: { label: "Texturas del Terreno", title: "Usa las texturas e iluminaci\u00f3n 3D del juego en lugar del minimapa 2D." },
 			options_TerrainDetail: { label: "Detalle del Suelo", title: "Requiere Texturas del Terreno. A\u00f1ade texturas de suelo de alta resoluci\u00f3n a corta distancia." },
+			options_3dRoads: { label: "Carreteras y Caminos", title: "Renderiza las carreteras, autopistas y caminos de tierra reales compilados de Project Reality sobre el terreno (81 mapas)." },
 			options_DrawSkybox: { label: "Cielo Atmosf\u00e9rico", title: "Renderiza el domo atmosf\u00e9rico aut\u00e9ntico del mapa y capa (d\u00eda, noche, nublado o tormenta) integrado con la niebla del horizonte." },
 			options_3dFog: { label: "Niebla", title: "Aplica la niebla de distancia de Project Reality seg\u00fan el mapa y la capa." },
 			options_3dFogOnPlayer: { label: "Centrar Niebla en Jugador", title: "Requiere Niebla. Centra la esfera de visibilidad de la niebla en el jugador seleccionado en lugar de la c\u00e1mara para ver su radio exacto de visi\u00f3n." },
@@ -1841,8 +1893,13 @@ var ANALYSER_I18N = {
 			options_BushTextures: { label: "Arbustos Detallados", title: "Renderiza arbustos 3D con texturas reales de cerca, en lugar de arbustos volum\u00e9tricos ligeros." },
 			options_StructureColors: { label: "Colorear por Tipo de Edificio", title: "Asigna un color consistente a cada tipo de edificio. Con Texturas activas, aplica tinte de color." },
 			options_FactionTextures: { label: "Texturas de Soldados y Veh\u00edculos", title: "Carga modelos y texturas reales de soldados y veh\u00edculos de PR en 3D." },
+			options_PredictiveEquipment: { label: "Equipamiento Predictivo", title: "Anticipa y muestra equipamiento secundario 3P (EpiPen, Botiqu\u00edn, Vendaje, Pala, Lanzadores AT/AA, Granadas, Minas, Bolsa de Munici\u00f3n) antes y durante cada acci\u00f3n." },
 			options_3dShadows: { label: "Sombras Din\u00e1micas", title: "Sombras direccionales en tiempo real alineadas con la direcci\u00f3n real del sol de cada mapa." },
 			options_3dAoSsao: { label: "Oclusi\u00f3n Ambiental (AO)", title: "Combina Vertex AO cocinado en edificios con oclusi\u00f3n ambiental en tiempo real (SSAO)." },
+			options_3dPrReflections: { label: "Reflejos y Relieve (PR)", title: "A\u00f1ade reflejos especulares y Fresnel del cielo en veh\u00edculos y edificios, m\u00e1s relieve solar direccional en el terreno." },
+			options_3dWind: { label: "Viento en Vegetaci\u00f3n", title: "Anima un balanceo suave por viento en copas de \u00e1rboles y arbustos." },
+			options_3dWeather: { label: "Clima (Lluvia / Nieve)", title: "Renderiza lluvia, nieve o ventisca \u00fanicamente en los mapas y capas exactos que tienen precipitaci\u00f3n en Project Reality." },
+			options_3dBloom: { label: "Bloom y Halo Solar", title: "A\u00f1ade resplandor selectivo en afterburners, explosiones y brillos, halo atmosf\u00e9rico solar y tone mapping suave." },
 			options_DrawVisionCone: {
 				label: "Cono de Visi\u00f3n",
 				title: "Proyecta el cono del campo de visi\u00f3n del jugador seleccionado (94.9 grados FOV horizontal), calibrado al alcance visual del mapa y respetando la niebla en 3D."
@@ -1887,6 +1944,10 @@ var ANALYSER_I18N = {
 				label: "Seguir Selecci\u00f3n [T]",
 				title: "Sigue fluidamente al jugador o veh\u00edculo seleccionado con la c\u00e1mara en 2D y 3D. Pulsa 'T' para activar o desactivar."
 			},
+			options_FirstPersonView: {
+				label: "Vista Primera Persona [F]",
+				title: "Activa la vista 3D en primera persona desde los ojos del soldado o asiento del veh\u00edculo. Pulsa 'F' para alternar y '[' / ']' para cambiar de asiento."
+			},
 			options_DrawBuildingWireframes: {
 				label: "Contornos de Edificios",
 				title: "Muestra el contorno vectorial 2D de edificios y muros extra\u00eddos de las mallas 3D del juego."
@@ -1918,6 +1979,7 @@ var ANALYSER_I18N = {
 		mode2dToast: "Mapa 2D",
 		mode3dFreeToast: "C\u00e2mera Livre 3D",
 		mode3dTopToast: "Vis\u00e3o Superior 3D",
+		fpvNoTargetToast: "Selecione primeiro um jogador ou ve\u00edculo para 1PV",
 		copyLinkTitle: "Copiar link com tempo atual",
 		bookmarksTitle: "Marcadores",
 		menuMapTitle: "Op\u00e7\u00f5es de Mapa e HUD",
@@ -1934,6 +1996,8 @@ var ANALYSER_I18N = {
 		sec3dTerrain: "Terreno e C\u00e9u",
 		sec3dStructures: "Estruturas e Unidades",
 		sec3dLighting: "Ilumina\u00e7\u00e3o e Sombras",
+		sec3dEnvironment: "Ambiente e Efeitos",
+		sec3dPostProcess: "P\u00f3s-Processamento",
 		ssaoQualTitle: "Qualidade de AO",
 		ssaoQualTip: "Controla a resolu\u00e7\u00e3o e amostras do SSAO. Em Balanced/High (resolu\u00e7\u00e3o total) elimina o borrado nas sombras de contato.",
 		aaTitle: "Anti-Aliasing",
@@ -2025,6 +2089,7 @@ var ANALYSER_I18N = {
 			options_UseFallbackRenderer: { label: "Mapa 2D Cl\u00e1ssico", title: "Usa o mapa 2D cl\u00e1ssico de imagem \u00fanica em vez do atlas de zoom." },
 			options_RealTerrain: { label: "Texturas do Terreno", title: "Usa texturas e ilumina\u00e7\u00e3o 3D reais em vez do minimapa 2D." },
 			options_TerrainDetail: { label: "Detalhe do Solo", title: "Requer Texturas do Terreno. Adiciona detalhes de solo de alta resolu\u00e7\u00e3o de perto." },
+			options_3dRoads: { label: "Estradas e Trilhas", title: "Renderiza as estradas, rodovias e trilhas reais compiladas do Project Reality sobre o terreno (81 mapas)." },
 			options_DrawSkybox: { label: "C\u00e9u Atmosf\u00e9rico", title: "Renderiza a c\u00fapula atmosf\u00e9rica aut\u00eantica do mapa e camada (dia, noite, nublado ou tempestade) integrada \u00e0 neblina do horizonte." },
 			options_3dFog: { label: "Neblina", title: "Aplica a neblina de dist\u00e2ncia do Project Reality conforme o mapa e a camada." },
 			options_3dFogOnPlayer: { label: "Centralizar Neblina no Jogador", title: "Requer Neblina. Centraliza a esfera de visibilidade da neblina no jogador selecionado em vez da c\u00e2mera para ver o raio exato de vis\u00e3o." },
@@ -2034,8 +2099,13 @@ var ANALYSER_I18N = {
 			options_BushTextures: { label: "Arbustos Detalhados", title: "Renderiza arbustos 3D com texturas reais de perto, em vez de arbustos volum\u00e9tricos leves." },
 			options_StructureColors: { label: "Colorir por Tipo de Edif\u00edcio", title: "Atribui uma cor consistente a cada tipo de edif\u00edcio. Com Texturas ativas, tinge as texturas." },
 			options_FactionTextures: { label: "Texturas de Soldados e Ve\u00edculos", title: "Carrega modelos e texturas reais de soldados e ve\u00edculos do PR em 3D." },
+			options_PredictiveEquipment: { label: "Equipamento Preditivo", title: "Antecipa e exibe equipamentos secund\u00e1rios 3P (EpiPen, Kit M\u00e9dico, Curativo, P\u00e1, Lan\u00e7adores AT/AA, Granadas, Minas, Muni\u00e7\u00e3o) antes e durante cada a\u00e7\u00e3o." },
 			options_3dShadows: { label: "Sombras Din\u00e2micas", title: "Sombras direcionais em tempo real alinhadas com a dire\u00e7\u00e3o real do sol de cada mapa." },
 			options_3dAoSsao: { label: "Oclus\u00e3o Ambiental (AO)", title: "Combina Vertex AO cozido nos edif\u00edcios com oclus\u00e3o ambiental em tempo real (SSAO)." },
+			options_3dPrReflections: { label: "Reflexos e Relevo (PR)", title: "Adiciona brilho especular e Fresnel do c\u00e9u em ve\u00edculos e edif\u00edcios, al\u00e9m de relevo solar no terreno." },
+			options_3dWind: { label: "Vento na Vegeta\u00e7\u00e3o", title: "Anima o balan\u00e7o suave pelo vento nas copas de \u00e1rvores e arbustos." },
+			options_3dWeather: { label: "Clima (Chuva / Neve)", title: "Renderiza chuva, neve ou nevasca apenas nos mapas e camadas exatos que t\u00eam precipita\u00e7\u00e3o no Project Reality." },
+			options_3dBloom: { label: "Bloom e Halo Solar", title: "Adiciona brilho seletivo em afterburners e explos\u00f5es, halo solar atmosf\u00e9rico e tone mapping suave." },
 			options_DrawVisionCone: {
 				label: "Cone de Vis\u00e3o",
 				title: "Projeta o cone do campo de vis\u00e3o do jogador selecionado (94.9 graus FOV horizontal), calibrado ao alcance visual do mapa e respeitando a neblina em 3D."
@@ -2079,6 +2149,10 @@ var ANALYSER_I18N = {
 			options_CameraTracking: {
 				label: "Seguir Sele\u00e7\u00e3o [T]",
 				title: "Segue suavemente o jogador ou ve\u00edculo selecionado com a c\u00e2mera em 2D e 3D. Pressione 'T' para alternar."
+			},
+			options_FirstPersonView: {
+				label: "Vis\u00e3o em 1\u00aa Pessoa [F]",
+				title: "Alterna para a vis\u00e3o 3D em primeira pessoa pelos olhos do soldado ou assento do ve\u00edculo. Pressione 'F' para alternar e '[' / ']' para trocar de assento."
 			},
 			options_DrawBuildingWireframes: {
 				label: "Contornos de Edif\u00edcios",
@@ -2145,6 +2219,8 @@ function setAnalyserLanguage(lang) {
 	_setText("lblSec3DTerrain", data.sec3dTerrain);
 	_setText("lblSec3DStructures", data.sec3dStructures);
 	_setText("lblSec3DLighting", data.sec3dLighting);
+	_setText("lblSec3DEnvironment", data.sec3dEnvironment);
+	_setText("lblSec3DPostProcess", data.sec3dPostProcess);
 	_setText("lblSsaoQualTitle", data.ssaoQualTitle);
 	_setTitle("rowSsaoQuality", data.ssaoQualTip);
 	_setText("lblAATitle", data.aaTitle);

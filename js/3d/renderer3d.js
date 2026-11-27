@@ -41,13 +41,22 @@ class Renderer3d extends Initializable {
         this.canvas = document.querySelector("#map3d");
         this.mapDiv = document.querySelector("#renderers");
         this.dataReady = true;
+        this.fpvYawOffset = 0;
+        this.fpvPitch = 0;
+        this._fpvInitialized = false;
+        this._fpvSmoothPos = vec3.create();
+        this._fpvSmoothYaw = 0;
+        this._fpvLastTargetKey = "";
+        this._fpvStanceMem = {};
+        this._fpvViewQuat = null;
+        this._fpvActiveState = null;
     }
 
     getIsDataReady() {
         return true;
     }
 
-    getInitializationList() { return [skyboxRenderer, terrainRenderer, building3dRenderer, water3dRenderer, geometry2dRenderer, entities3dRenderer, lines3dRenderer, smoke3dRenderer, hud3d]; }
+    getInitializationList() { return [skyboxRenderer, terrainRenderer, roads3dRenderer, building3dRenderer, water3dRenderer, geometry2dRenderer, entities3dRenderer, lines3dRenderer, smoke3dRenderer, weather3dRenderer, hud3d]; }
     getDependencyList() { return [heightmap]; }
 
     init() {
@@ -89,10 +98,22 @@ class Renderer3d extends Initializable {
         this._initSceneFbo();
         this._initShadowPass();
         this._initSsaoPass();
+        this._initBloomPass();
         this._initFxaaPass();
 
         this._updateRenderingSize();
         vec4.set(this.cameraPos, 0, 300, 0, 0);
+
+        if (!this._fpvDblClickBound && this.canvas) {
+            this._fpvDblClickBound = true;
+            this.canvas.addEventListener("dblclick", () => {
+                if (this.isFirstPersonActive()) {
+                    this.fpvYawOffset = 0;
+                    this.fpvPitch = 0;
+                    if (typeof requestUpdate === "function") requestUpdate();
+                }
+            });
+        }
 
         this.initialized = true;
         return true;
@@ -120,9 +141,18 @@ class Renderer3d extends Initializable {
     mouseClick(pos) {
         if (!this.canvas || !this.cameraPos) return null;
 
+        // Prioritize 1PV / overlay HUD buttons before entity selection
+        if (typeof hud3d !== "undefined" && hud3d.initialized && typeof hud3d.handleHudClick === "function") {
+            if (hud3d.handleHudClick(pos.X, pos.Y)) {
+                return { _isHudAction: true };
+            }
+        }
+
+        const fpvState = this.getActive1PVState();
+
         // Prioritize clicking floating 3D HUD icons (especially soldiers/vehicles at distance)
         if (typeof hud3d !== "undefined" && hud3d.initialized && typeof hud3d.pickEntityAtScreenPos === "function") {
-            const iconHit = hud3d.pickEntityAtScreenPos(pos.X, pos.Y);
+            const iconHit = hud3d.pickEntityAtScreenPos(pos.X, pos.Y, false);
             if (iconHit) return iconHit;
         }
 
@@ -150,6 +180,7 @@ class Renderer3d extends Initializable {
             for (let i in AllPlayers) {
                 const p = AllPlayers[i];
                 if (!p || p.isJoining || !p.isAlive || (p.vehicleid && p.vehicleid >= 0)) continue;
+                if (fpvState && fpvState.active && p.id === fpvState.fpvPlayerId) continue;
 
                 let px = (typeof p.getX === "function") ? p.getX() : p.X;
                 let py = (typeof p.getY === "function") ? p.getY() : (p.Y || 0);
@@ -187,6 +218,7 @@ class Renderer3d extends Initializable {
             for (let i in AllVehicles) {
                 const v = AllVehicles[i];
                 if (!v || v.isClimbingVehicle) continue;
+                if (fpvState && fpvState.active && v.id === fpvState.fpvVehicleId) continue;
                 if (!showEmptyVehs && (!v.Passengers || v.Passengers.size === 0)) continue;
 
                 let vx = (typeof v.getX === "function") ? v.getX() : v.X;
@@ -213,6 +245,9 @@ class Renderer3d extends Initializable {
             }
         }
 
+        if (fpvState && fpvState.active && !bestEntity) {
+            return { _isHudAction: true };
+        }
         return bestEntity;
     }
 
@@ -271,10 +306,18 @@ class Renderer3d extends Initializable {
         return viewMatrix;
     }
 
+    getCamNear() {
+        return this.isFirstPersonActive() ? 0.10 : 0.25;
+    }
+
+    getCamFar() {
+        return 20000.0;
+    }
+
     getCurrentProjectionMatrix() {
         const fieldOfView = this.fov * Math.PI / 180;
-        const zNear = 0.25;
-        const zFar = 20000.0; // 20km view distance prevents terrain horizon clipping
+        const zNear = this.getCamNear();
+        const zFar = this.getCamFar(); // 20km view distance prevents terrain horizon clipping
         const projectionMatrix = mat4.create();
         mat4.perspective(projectionMatrix,
             fieldOfView,
@@ -285,6 +328,9 @@ class Renderer3d extends Initializable {
     }
 
     getCameraQuat() {
+        if (this._fpvViewQuat && this.isFirstPersonActive()) {
+            return quat.clone(this._fpvViewQuat);
+        }
         const cameraRot = quat.create();
         quat.fromEuler(cameraRot, this.cameraPitch, this.cameraYaw, 0);
         return cameraRot;
@@ -337,6 +383,13 @@ class Renderer3d extends Initializable {
         }
 
         const zoomScale = Math.max(0.02, Math.tan((this.fov * Math.PI) / 360.0) / Math.tan(((this.baseFov || 90.0) * Math.PI) / 360.0));
+        if (this.isFirstPersonActive()) {
+            this.fpvYawOffset = ((((this.fpvYawOffset - (x / 6) * zoomScale) % 360) + 540) % 360) - 180;
+            this.fpvPitch = clamp(-85, this.fpvPitch + (y / 6) * zoomScale, 85);
+            requestUpdate();
+            return;
+        }
+
         this.cameraYaw += (x / 6) * zoomScale;
         this.cameraPitch += (y / 6) * zoomScale;
 
@@ -370,213 +423,582 @@ class Renderer3d extends Initializable {
         this.orbitDistance = clamp(2.0, this.orbitDistance + delta, 300.0);
     }
 
-    _getTrackedVehiclePos(v) {
+    _getTrackedVehiclePos(v, dt = 0.016) {
         if (!v) return null;
-        const vx = (typeof v.getX === "function") ? v.getX() : v.X;
-        const hasSmoothY = (typeof v._smoothY === "number" && Number.isFinite(v._smoothY));
-        let vy = hasSmoothY ? v._smoothY : ((typeof v.getY === "function") ? v.getY() : (v.Y || 0));
-        const vz = (typeof v.getZ === "function") ? v.getZ() : v.Z;
+        if (typeof entities3dRenderer !== "undefined" && entities3dRenderer && typeof entities3dRenderer.syncVehiclePose === "function") {
+            const meshKey = (typeof entities3dRenderer.getVehicleMeshKey === "function") ? entities3dRenderer.getVehicleMeshKey(v) : null;
+            const gpuMesh = (meshKey && entities3dRenderer.gpuMeshCache) ? entities3dRenderer.gpuMeshCache[meshKey] : null;
+            entities3dRenderer.syncVehiclePose(v, gpuMesh, dt, this._renderFrameStamp);
+        }
+        const pose = v._poseCache;
+        const vx = (pose && typeof pose.posX === "number" && Number.isFinite(pose.posX)) ? pose.posX : ((typeof v.getX === "function") ? v.getX() : v.X);
+        const hasSmoothY = (pose && typeof pose.smoothY === "number" && Number.isFinite(pose.smoothY)) || (typeof v._smoothY === "number" && Number.isFinite(v._smoothY));
+        let vy = (pose && typeof pose.smoothY === "number" && Number.isFinite(pose.smoothY))
+            ? pose.smoothY
+            : (hasSmoothY ? v._smoothY : ((typeof v.getY === "function") ? v.getY() : (v.Y || 0)));
+        const vz = (pose && typeof pose.posZ === "number" && Number.isFinite(pose.posZ)) ? pose.posZ : ((typeof v.getZ === "function") ? v.getZ() : v.Z);
         if (!hasSmoothY && typeof heightmap !== "undefined" && !v.isFlyingVehicle) {
             vy = Math.max(vy, heightmap.getHeightFromCoords(vx, vz));
         }
         return vec3.set(vec3.create(), vx, vy + this.trackedHeightOffset, -vz);
     }
 
-    update(frameTime) {
-        let renderNeeded = false;
+    isFirstPersonActive() {
+        const st = this.getActive1PVState();
+        return !!(st && st.active);
+    }
 
-        const isTracking = (typeof options_CameraTracking !== "undefined" && options_CameraTracking);
-        let trackedTargetPos = null;
+    getActive1PVState() {
+        if (!this.initialized || typeof is3DMode === "undefined" || !is3DMode || this.isTopDown ||
+            typeof options_FirstPersonView === "undefined" || !options_FirstPersonView) {
+            return { active: false };
+        }
 
-        if (isTracking) {
-            if (typeof SelectedPlayer !== "undefined" && SelectedPlayer != SELECTED_NOTHING && typeof AllPlayers !== "undefined") {
-                const p = AllPlayers[SelectedPlayer];
-                if (p && !p.isJoining) {
-                    if (p.vehicleid >= 0 && typeof AllVehicles !== "undefined") {
-                        trackedTargetPos = this._getTrackedVehiclePos(AllVehicles[p.vehicleid]);
-                    } else {
-                        let px = (typeof p.getX === "function") ? p.getX() : p.X;
-                        let py = (typeof p.getY === "function") ? p.getY() : (p.Y || 0);
-                        let pz = (typeof p.getZ === "function") ? p.getZ() : p.Z;
-                        const floorY = (typeof heightmap !== "undefined")
-                            ? Math.max(heightmap.getHeightFromCoords(px, pz), py - 0.85)
-                            : (py - 0.85);
-                        // Match Entities3dRenderer soldier ground baseline (0..1.58m mesh) and apply vertical offset
-                        trackedTargetPos = vec3.set(vec3.create(), px, floorY + (this.trackedHeightOffset - 0.2), -pz);
-                    }
+        const hasSelP = (typeof SelectedPlayer !== "undefined" && SelectedPlayer != SELECTED_NOTHING &&
+            typeof AllPlayers !== "undefined" && !!AllPlayers[SelectedPlayer]);
+        const p = hasSelP ? AllPlayers[SelectedPlayer] : null;
+
+        let v = null;
+        if (p && p.vehicleid != null && p.vehicleid >= 0 && typeof AllVehicles !== "undefined" && AllVehicles[p.vehicleid]) {
+            v = AllVehicles[p.vehicleid];
+        } else if (!p && typeof SelectedVehicle !== "undefined" && SelectedVehicle != SELECTED_NOTHING &&
+            typeof AllVehicles !== "undefined" && AllVehicles[SelectedVehicle]) {
+            v = AllVehicles[SelectedVehicle];
+        }
+
+        if (!p && !v) {
+            if (typeof toggleFirstPersonView === "function") {
+                toggleFirstPersonView(false);
+            } else {
+                options_FirstPersonView = false;
+                const chk = document.getElementById("options_FirstPersonView");
+                if (chk) chk.checked = false;
+            }
+            this._fpvActiveState = null;
+            this._fpvViewQuat = null;
+            return { active: false };
+        }
+
+        if (p && p.isJoining && !v) {
+            return { active: false };
+        }
+
+        if (v && !v.isClimbingVehicle) {
+            const crewIds = [];
+            if (v.Passengers && typeof v.Passengers.forEach === "function" && typeof AllPlayers !== "undefined") {
+                const crewObjs = [];
+                v.Passengers.forEach((pid) => {
+                    const cp = AllPlayers[pid];
+                    if (cp && !cp.isJoining && cp.isAlive) crewObjs.push(cp);
+                });
+                crewObjs.sort((a, b) => {
+                    const sa = (a.vehicleSlot != null) ? Number(a.vehicleSlot) : 99;
+                    const sb = (b.vehicleSlot != null) ? Number(b.vehicleSlot) : 99;
+                    if (sa !== sb) return sa - sb;
+                    return Number(a.id) - Number(b.id);
+                });
+                for (let i = 0; i < crewObjs.length; i++) {
+                    crewIds.push(crewObjs[i].id);
                 }
-            } else if (typeof SelectedVehicle !== "undefined" && SelectedVehicle != SELECTED_NOTHING && typeof AllVehicles !== "undefined") {
-                trackedTargetPos = this._getTrackedVehiclePos(AllVehicles[SelectedVehicle]);
+            }
+            const seatIndex = p ? crewIds.indexOf(p.id) : -1;
+            const seat = (typeof entities3dRenderer !== "undefined" && typeof entities3dRenderer.resolveVehicleSeat === "function")
+                ? entities3dRenderer.resolveVehicleSeat(v, p, new Set())
+                : { visible3p: false, cam: [0, 1.8, 0], yaw: 0, onTurret: false, enclosed1pv: false };
+
+            const state = {
+                active: true,
+                mode: "vehicle",
+                player: p,
+                vehicle: v,
+                fpvPlayerId: p ? p.id : null,
+                fpvVehicleId: v.id,
+                seat: seat,
+                fpvEnclosed: !!(seat && seat.enclosed1pv),
+                fpvHidePlayer: true,
+                fpvHideVehicle: false,
+                crewIds: crewIds,
+                seatIndex: seatIndex,
+                crewCount: crewIds.length
+            };
+            this._fpvActiveState = state;
+            return state;
+        }
+
+        const state = {
+            active: true,
+            mode: "infantry",
+            player: p,
+            vehicle: null,
+            fpvPlayerId: p ? p.id : null,
+            fpvVehicleId: null,
+            seat: null,
+            fpvEnclosed: false,
+            fpvHidePlayer: true,
+            fpvHideVehicle: false,
+            crewIds: [],
+            seatIndex: -1,
+            crewCount: 0
+        };
+        this._fpvActiveState = state;
+        return state;
+    }
+
+    update1PVCamera(dt) {
+        const st = this.getActive1PVState();
+        if (!st || !st.active) {
+            this._fpvViewQuat = null;
+            this._fpvActiveState = null;
+            return { active: false, settled: true };
+        }
+
+        const targetKey = (st.mode === "vehicle")
+            ? ("V:" + st.fpvVehicleId + ":P:" + (st.fpvPlayerId != null ? st.fpvPlayerId : "none"))
+            : ("P:" + st.fpvPlayerId);
+        const isNewTarget = (!this._fpvInitialized || this._fpvLastTargetKey !== targetKey);
+        const fastFwd = (typeof isFastForwarding !== "undefined" && isFastForwarding);
+        const safeDt = Math.min(0.1, Math.max(0.001, dt || 0.016));
+        let settled = true;
+
+        if (st.mode === "infantry") {
+            const p = st.player;
+            if (!p) {
+                this._fpvViewQuat = null;
+                return { active: false, settled: true };
+            }
+            let px = (typeof p.getX === "function") ? p.getX() : p.X;
+            let py = (typeof p.getY === "function") ? p.getY() : (p.Y || 0);
+            let pz = (typeof p.getZ === "function") ? p.getZ() : p.Z;
+            if (px == null || isNaN(px)) px = p.X;
+            if (pz == null || isNaN(pz)) pz = p.Z;
+            if (py == null || isNaN(py)) py = p.Y || 0;
+            if (px == null || isNaN(px) || pz == null || isNaN(pz)) {
+                return { active: false, settled: true };
+            }
+            const rotDeg = (typeof p.getRotation === "function") ? p.getRotation() : (p.rotation || 0);
+
+            const gh = (typeof heightmap !== "undefined") ? heightmap.getHeightFromCoords(px, pz) : 0;
+            let supportY = gh;
+            if (typeof buildingHeightmap !== "undefined" && buildingHeightmap.initialized && typeof buildingHeightmap.getSupportSurfaceY === "function") {
+                supportY = buildingHeightmap.getSupportSurfaceY(px, py, pz, gh);
+            }
+            const relY = py - supportY;
+            const spdKmh = (typeof getEntitySpeedKmh === "function") ? getEntitySpeedKmh(p) : 0;
+
+            const prevStance = this._fpvStanceMem[p.id] || "stand";
+            let stance = prevStance;
+            if (!p.isAlive) {
+                stance = "dead";
+            } else if (spdKmh >= 6.0) {
+                stance = "stand";
+            } else if (spdKmh >= 1.8) {
+                if (prevStance === "crouch") {
+                    stance = (relY > 0.65 + 0.12) ? "stand" : "crouch";
+                } else {
+                    stance = (relY <= 0.65 - 0.12) ? "crouch" : "stand";
+                }
+            } else {
+                if (prevStance === "prone") {
+                    if (relY > 0.65 + 0.12) stance = "stand";
+                    else if (relY > 0.25 + 0.12) stance = "crouch";
+                    else stance = "prone";
+                } else if (prevStance === "crouch") {
+                    if (relY <= 0.25 - 0.12) stance = "prone";
+                    else if (relY > 0.65 + 0.12) stance = "stand";
+                    else stance = "crouch";
+                } else {
+                    if (relY <= 0.25 - 0.12) stance = "prone";
+                    else if (relY <= 0.65 - 0.12) stance = "crouch";
+                    else stance = "stand";
+                }
+            }
+            this._fpvStanceMem[p.id] = stance;
+
+            const pelvisOffset = (stance === "prone" || stance === "dead") ? 0.15 : ((stance === "crouch") ? 0.50 : 0.85);
+            const eyeHeight = (!p.isAlive) ? 0.30 : (stance === "prone" ? 0.37 : (stance === "crouch" ? 0.95 : 1.47));
+            const floorY = Math.max(supportY, py - pelvisOffset);
+            const rad = (rotDeg * Math.PI) / 180.0;
+            const targetX = px + Math.sin(rad) * 0.08;
+            const targetY = floorY + eyeHeight;
+            const targetZ = -(pz + Math.cos(rad) * 0.08);
+
+            const dx = targetX - this._fpvSmoothPos[0];
+            const dy = targetY - this._fpvSmoothPos[1];
+            const dz = targetZ - this._fpvSmoothPos[2];
+            const distSq = dx * dx + dy * dy + dz * dz;
+
+            if (isNewTarget || fastFwd || distSq > 100.0) {
+                vec3.set(this._fpvSmoothPos, targetX, targetY, targetZ);
+                this._fpvSmoothYaw = ((rotDeg % 360) + 360) % 360;
+            } else {
+                const alphaXZ = 1.0 - Math.exp(-15.0 * safeDt);
+                const alphaY = 1.0 - Math.exp(-8.0 * safeDt);
+                const alphaYaw = 1.0 - Math.exp(-18.0 * safeDt);
+                this._fpvSmoothPos[0] += dx * alphaXZ;
+                this._fpvSmoothPos[1] += dy * alphaY;
+                this._fpvSmoothPos[2] += dz * alphaXZ;
+                const yawDiff = ((rotDeg - this._fpvSmoothYaw + 540) % 360) - 180;
+                this._fpvSmoothYaw = ((this._fpvSmoothYaw + yawDiff * alphaYaw) % 360 + 360) % 360;
+                if (distSq > 0.0001 || Math.abs(yawDiff) > 0.05) settled = false;
+            }
+
+            vec4.set(this.cameraPos, this._fpvSmoothPos[0], this._fpvSmoothPos[1], this._fpvSmoothPos[2], 1.0);
+            this.cameraYaw = ((-this._fpvSmoothYaw - this.fpvYawOffset) % 360 + 360) % 360;
+            this.cameraPitch = clamp(-85, this.fpvPitch, 85);
+            this._fpvViewQuat = null;
+            this._fpvLastTargetKey = targetKey;
+            this._fpvInitialized = true;
+            return { active: true, settled: settled };
+        }
+
+        // Vehicle 1PV camera (synchronized on the exact same frameStamp as entities3d.draw -> zero cockpit bounce!)
+        const v = st.vehicle;
+        const p = st.player;
+        const seat = st.seat || { cam: [0, 1.8, 0], yaw: 0, onTurret: false };
+
+        let syncedPose = null;
+        let gpuMesh = null;
+        if (typeof entities3dRenderer !== "undefined" && entities3dRenderer) {
+            const meshKey = (typeof entities3dRenderer.getVehicleMeshKey === "function") ? entities3dRenderer.getVehicleMeshKey(v) : null;
+            gpuMesh = (meshKey && entities3dRenderer.gpuMeshCache) ? entities3dRenderer.gpuMeshCache[meshKey] : null;
+            if (typeof entities3dRenderer.syncVehiclePose === "function") {
+                syncedPose = entities3dRenderer.syncVehiclePose(v, gpuMesh, safeDt, this._renderFrameStamp);
             }
         }
 
-        if (this.isTopDown) {
-            let altDir = 0;
-            if (keysDown.has(69)) altDir += 1; // E (Up +Y)
-            if (keysDown.has(81)) altDir -= 1; // Q (Down -Y)
-            if (altDir !== 0) {
-                if (this.targetTopDownAltitude == null) {
-                    this.targetTopDownAltitude = this.cameraPos[1];
+        let vx, vy, vz, vRotDeg, vPitch, vRoll, modelMatrix;
+        if (syncedPose) {
+            vx = syncedPose.posX;
+            vy = syncedPose.smoothY;
+            vz = syncedPose.posZ;
+            vRotDeg = syncedPose.rotDeg;
+            vPitch = syncedPose.smoothPitch;
+            vRoll = syncedPose.smoothRoll;
+            modelMatrix = syncedPose.modelMatrix;
+        } else {
+            vx = (typeof v.getX === "function") ? v.getX() : v.X;
+            vz = (typeof v.getZ === "function") ? v.getZ() : v.Z;
+            vy = (typeof v._smoothY === "number" && Number.isFinite(v._smoothY))
+                ? v._smoothY
+                : ((typeof v.getY === "function") ? v.getY() : (v.Y || 0));
+            if (vx == null || isNaN(vx)) vx = v.X;
+            if (vz == null || isNaN(vz)) vz = v.Z;
+            if (vy == null || isNaN(vy)) vy = v.Y || 0;
+            if (vx == null || isNaN(vx) || vz == null || isNaN(vz)) {
+                return { active: false, settled: true };
+            }
+            if (typeof v._smoothY !== "number" && typeof heightmap !== "undefined" && !v.isFlyingVehicle) {
+                vy = Math.max(vy, heightmap.getHeightFromCoords(vx, vz));
+            }
+            vRotDeg = (typeof v.getRotation === "function") ? v.getRotation() : (v.rotation || 0);
+            vPitch = (typeof v._smoothPitch === "number" && Number.isFinite(v._smoothPitch)) ? v._smoothPitch : 0.0;
+            vRoll = (typeof v._smoothRoll === "number" && Number.isFinite(v._smoothRoll)) ? v._smoothRoll : 0.0;
+            modelMatrix = mat4.create();
+            mat4.translate(modelMatrix, modelMatrix, [vx, vy, -vz]);
+            mat4.rotateY(modelMatrix, modelMatrix, -(vRotDeg * Math.PI / 180.0));
+            if (Math.abs(vPitch) > 0.001) mat4.rotateX(modelMatrix, modelMatrix, vPitch);
+            if (Math.abs(vRoll) > 0.001) mat4.rotateZ(modelMatrix, modelMatrix, vRoll);
+        }
+
+        let activeMatrix = modelMatrix;
+        let useTurretYaw = false;
+        let turretRelYawRad = 0.0;
+        if (seat.onTurret && typeof entities3dRenderer !== "undefined" && entities3dRenderer && gpuMesh && gpuMesh.isMultiPart && gpuMesh.turret) {
+            turretRelYawRad = (typeof entities3dRenderer.getVehicleTurretRelYawRad === "function")
+                ? entities3dRenderer.getVehicleTurretRelYawRad(v, vRotDeg)
+                : ((typeof v._turretRelYawRad === "number" && Number.isFinite(v._turretRelYawRad)) ? v._turretRelYawRad : 0.0);
+            useTurretYaw = true;
+            if (Math.abs(turretRelYawRad) > 0.0005) {
+                const piv = gpuMesh.turret.pivot || [0.0, 1.5, 0.0];
+                const turretMatrix = mat4.clone(modelMatrix);
+                mat4.translate(turretMatrix, turretMatrix, piv);
+                mat4.rotateY(turretMatrix, turretMatrix, turretRelYawRad);
+                mat4.translate(turretMatrix, turretMatrix, [-piv[0], -piv[1], -piv[2]]);
+                activeMatrix = turretMatrix;
+            }
+        }
+
+        const camLocal = (Array.isArray(seat.cam) && seat.cam.length >= 3) ? seat.cam : [0, 1.8, 0];
+        const worldEye = vec3.transformMat4(vec3.create(), camLocal, activeMatrix);
+        // Lock camera directly to the vehicle's interpolated world seat position (zero trailing lag at high speed)
+        vec3.copy(this._fpvSmoothPos, worldEye);
+        vec4.set(this.cameraPos, this._fpvSmoothPos[0], this._fpvSmoothPos[1], this._fpvSmoothPos[2], 1.0);
+
+        const qView = quat.create();
+        quat.rotateY(qView, qView, -(vRotDeg * Math.PI / 180.0));
+        if (Math.abs(vPitch) > 0.001) quat.rotateX(qView, qView, vPitch);
+        if (Math.abs(vRoll) > 0.001) quat.rotateZ(qView, qView, vRoll);
+
+        if (useTurretYaw) {
+            // Lock gunner 1PV directly to the 3D turret/cannon yaw (+ optional user free-look offset)
+            this._fpvSmoothYaw = (((vRotDeg - (turretRelYawRad * 180.0 / Math.PI)) % 360) + 360) % 360;
+            quat.rotateY(qView, qView, turretRelYawRad - (this.fpvYawOffset * Math.PI / 180.0));
+        } else {
+            let baseYawDeg = vRotDeg + (seat.yaw || 0);
+            if (p && (p.vehicleSlot !== 0 || v.ns_isStationaryWeapon) &&
+                (typeof gunnerRotationSupported === "undefined" || gunnerRotationSupported) &&
+                p.rotation != null && !isNaN(p.rotation)) {
+                baseYawDeg = (typeof p.getRotation === "function") ? p.getRotation() : p.rotation;
+            }
+            this._fpvSmoothYaw = ((baseYawDeg % 360) + 360) % 360;
+            const localLookYawDeg = (((this._fpvSmoothYaw - vRotDeg + this.fpvYawOffset) % 360) + 540) % 360 - 180;
+            quat.rotateY(qView, qView, -(localLookYawDeg * Math.PI / 180.0));
+        }
+
+        const localPitchDeg = clamp(-85, this.fpvPitch, 85);
+        quat.rotateX(qView, qView, localPitchDeg * Math.PI / 180.0);
+        quat.normalize(qView, qView);
+        this._fpvViewQuat = qView;
+
+        const fwd = this.getCameraForward(qView);
+        this.cameraYaw = ((-Math.atan2(fwd[0], -fwd[2]) * 180.0 / Math.PI) % 360 + 360) % 360;
+        this.cameraPitch = clamp(-89, Math.asin(clamp(-1, fwd[1], 1)) * 180.0 / Math.PI, 89);
+
+        this._fpvLastTargetKey = targetKey;
+        this._fpvInitialized = true;
+        return { active: true, settled: settled };
+    }
+
+    update(frameTime) {
+        let renderNeeded = false;
+        this._renderFrameStamp = (this._renderFrameStamp || 0) + 1;
+
+        const fpvRes = this.update1PVCamera(frameTime);
+        if (fpvRes && fpvRes.active) {
+            if (!fpvRes.settled) renderNeeded = true;
+        } else {
+            const isTracking = (typeof options_CameraTracking !== "undefined" && options_CameraTracking);
+            let trackedTargetPos = null;
+            let trackedTargetKey = "";
+            let trackedIsVehicle = false;
+
+            if (isTracking) {
+                if (typeof SelectedPlayer !== "undefined" && SelectedPlayer != SELECTED_NOTHING && typeof AllPlayers !== "undefined") {
+                    const p = AllPlayers[SelectedPlayer];
+                    if (p && !p.isJoining) {
+                        if (p.vehicleid >= 0 && typeof AllVehicles !== "undefined") {
+                            trackedTargetPos = this._getTrackedVehiclePos(AllVehicles[p.vehicleid], frameTime);
+                            trackedTargetKey = "PV:" + p.vehicleid;
+                            trackedIsVehicle = true;
+                        } else {
+                            let px = (typeof p.getX === "function") ? p.getX() : p.X;
+                            let py = (typeof p.getY === "function") ? p.getY() : (p.Y || 0);
+                            let pz = (typeof p.getZ === "function") ? p.getZ() : p.Z;
+                            const floorY = (typeof heightmap !== "undefined")
+                                ? Math.max(heightmap.getHeightFromCoords(px, pz), py - 0.85)
+                                : (py - 0.85);
+                            // Match Entities3dRenderer soldier ground baseline (0..1.58m mesh) and apply vertical offset
+                            trackedTargetPos = vec3.set(vec3.create(), px, floorY + (this.trackedHeightOffset - 0.2), -pz);
+                            trackedTargetKey = "P:" + p.id;
+                        }
+                    }
+                } else if (typeof SelectedVehicle !== "undefined" && SelectedVehicle != SELECTED_NOTHING && typeof AllVehicles !== "undefined") {
+                    trackedTargetPos = this._getTrackedVehiclePos(AllVehicles[SelectedVehicle], frameTime);
+                    trackedTargetKey = "V:" + SelectedVehicle;
+                    trackedIsVehicle = true;
                 }
-                const altRate = keysDown.has(16) ? 2.2 : 1.0;
-                this.targetTopDownAltitude = clamp(
-                    50.0,
-                    this.targetTopDownAltitude * Math.exp(altDir * altRate * Math.min(frameTime, 0.25)),
-                    3500.0
-                );
-                renderNeeded = true;
             }
 
-            // Smooth Top-Down Altitude Interpolation
-            if (this.targetTopDownAltitude != null) {
-                const lerpAlt = Math.min(1.0, frameTime * 12.0);
-                this.cameraPos[1] += (this.targetTopDownAltitude - this.cameraPos[1]) * lerpAlt;
-                const preClampY = this.cameraPos[1];
-                this.clampPosition();
-                if (this.cameraPos[1] > preClampY && this.targetTopDownAltitude <= this.cameraPos[1]) {
-                    this.targetTopDownAltitude = null;
-                } else if (Math.abs(this.targetTopDownAltitude - this.cameraPos[1]) < 0.5) {
-                    this.cameraPos[1] = this.targetTopDownAltitude;
-                    this.targetTopDownAltitude = null;
-                } else if (typeof requestUpdate === "function") {
-                    requestUpdate();
-                }
-                renderNeeded = true;
+            if (!trackedTargetPos) {
+                this._lastTrackTargetKey = "";
+                this._trackSettled = false;
+            } else if (this._lastTrackTargetKey !== trackedTargetKey) {
+                this._lastTrackTargetKey = trackedTargetKey;
+                this._trackSettled = false;
             }
 
-            if (trackedTargetPos) {
-                // Top-Down Tracking Mode: Smoothly follow entity on ground plane (X, Z),
-                // while altitude (Y) remains freely controllable by the user (50m to 3500m)!
-                const lerpFactor = Math.min(1.0, frameTime * 16.0);
-                this.cameraPos[0] += (trackedTargetPos[0] - this.cameraPos[0]) * lerpFactor;
-                this.cameraPos[2] += (trackedTargetPos[2] - this.cameraPos[2]) * lerpFactor;
+            if (this.isTopDown) {
+                let altDir = 0;
+                if (keysDown.has(69)) altDir += 1; // E (Up +Y)
+                if (keysDown.has(81)) altDir -= 1; // Q (Down -Y)
+                if (altDir !== 0) {
+                    if (this.targetTopDownAltitude == null) {
+                        this.targetTopDownAltitude = this.cameraPos[1];
+                    }
+                    const altRate = keysDown.has(16) ? 2.2 : 1.0;
+                    this.targetTopDownAltitude = clamp(
+                        50.0,
+                        this.targetTopDownAltitude * Math.exp(altDir * altRate * Math.min(frameTime, 0.25)),
+                        3500.0
+                    );
+                    renderNeeded = true;
+                }
+
+                // Smooth Top-Down Altitude Interpolation
+                if (this.targetTopDownAltitude != null) {
+                    const lerpAlt = Math.min(1.0, frameTime * 12.0);
+                    this.cameraPos[1] += (this.targetTopDownAltitude - this.cameraPos[1]) * lerpAlt;
+                    const preClampY = this.cameraPos[1];
+                    this.clampPosition();
+                    if (this.cameraPos[1] > preClampY && this.targetTopDownAltitude <= this.cameraPos[1]) {
+                        this.targetTopDownAltitude = null;
+                    } else if (Math.abs(this.targetTopDownAltitude - this.cameraPos[1]) < 0.5) {
+                        this.cameraPos[1] = this.targetTopDownAltitude;
+                        this.targetTopDownAltitude = null;
+                    } else if (typeof requestUpdate === "function") {
+                        requestUpdate();
+                    }
+                    renderNeeded = true;
+                }
+
+                if (trackedTargetPos) {
+                    // Top-Down Tracking Mode: smooth glide on target switch, then zero-lag gimbal lock on ground plane (X, Z)
+                    if (this._trackSettled) {
+                        this.cameraPos[0] = trackedTargetPos[0];
+                        this.cameraPos[2] = trackedTargetPos[2];
+                    } else {
+                        const lerpFactor = 1.0 - Math.exp(-14.0 * Math.min(frameTime, 0.05));
+                        this.cameraPos[0] += (trackedTargetPos[0] - this.cameraPos[0]) * lerpFactor;
+                        this.cameraPos[2] += (trackedTargetPos[2] - this.cameraPos[2]) * lerpFactor;
+                        if (Math.hypot(trackedTargetPos[0] - this.cameraPos[0], trackedTargetPos[2] - this.cameraPos[2]) < 0.35) {
+                            this.cameraPos[0] = trackedTargetPos[0];
+                            this.cameraPos[2] = trackedTargetPos[2];
+                            this._trackSettled = true;
+                        }
+                    }
+                    this.clampPosition();
+                    renderNeeded = true;
+                } else {
+                    let speed = Math.max(200, this.cameraPos[1] * 0.8);
+                    if (keysDown.has(16)) speed *= 3.0; // Shift boost
+
+                    if (keysDown.has(87)) { // W (North)
+                        this.cameraPos[2] -= frameTime * speed;
+                        renderNeeded = true;
+                    }
+                    if (keysDown.has(83)) { // S (South)
+                        this.cameraPos[2] += frameTime * speed;
+                        renderNeeded = true;
+                    }
+                    if (keysDown.has(65)) { // A (West)
+                        this.cameraPos[0] -= frameTime * speed;
+                        renderNeeded = true;
+                    }
+                    if (keysDown.has(68)) { // D (East)
+                        this.cameraPos[0] += frameTime * speed;
+                        renderNeeded = true;
+                    }
+
+                    this.clampPosition();
+                }
+            } else if (trackedTargetPos) {
+                let zoomSpeed = 40.0;
+                let rotateSpeed = 80.0;
+                let heightSpeed = 6.0;
+                if (keysDown.has(16)) { // Shift multiplier
+                    zoomSpeed *= 3.0;
+                    rotateSpeed *= 2.0;
+                    heightSpeed *= 3.0;
+                }
+
+                const prevHeightOffset = this.trackedHeightOffset;
+
+                // W: Move closer towards where looking
+                if (keysDown.has(87)) {
+                    this.orbitDistance = Math.max(2.0, this.orbitDistance - frameTime * zoomSpeed);
+                    renderNeeded = true;
+                }
+                // S: Move back away
+                if (keysDown.has(83)) {
+                    this.orbitDistance = Math.min(300.0, this.orbitDistance + frameTime * zoomSpeed);
+                    renderNeeded = true;
+                }
+                // A: Orbit left around target
+                if (keysDown.has(65)) {
+                    this.cameraYaw -= frameTime * rotateSpeed;
+                    this.clampRotation();
+                    renderNeeded = true;
+                }
+                // D: Orbit right around target
+                if (keysDown.has(68)) {
+                    this.cameraYaw += frameTime * rotateSpeed;
+                    this.clampRotation();
+                    renderNeeded = true;
+                }
+                // E: Raise vertical orbit target offset
+                if (keysDown.has(69)) {
+                    this.trackedHeightOffset = clamp(0.2, this.trackedHeightOffset + frameTime * heightSpeed, 20.0);
+                    renderNeeded = true;
+                }
+                // Q: Lower vertical orbit target offset
+                if (keysDown.has(81)) {
+                    this.trackedHeightOffset = clamp(0.2, this.trackedHeightOffset - frameTime * heightSpeed, 20.0);
+                    renderNeeded = true;
+                }
+
+                if (this.trackedHeightOffset !== prevHeightOffset) {
+                    trackedTargetPos[1] += (this.trackedHeightOffset - prevHeightOffset);
+                }
+
+                // Use the exact view forward vector so the tracked target stays centered when orbiting
+                const fwd = this.getCameraForward();
+                const fwdX = fwd[0];
+                const fwdY = fwd[1];
+                const fwdZ = fwd[2];
+
+                // Camera placed at distance along the independent look line of sight
+                const targetCamX = trackedTargetPos[0] - fwdX * this.orbitDistance;
+                const targetCamY = trackedTargetPos[1] - fwdY * this.orbitDistance;
+                const targetCamZ = trackedTargetPos[2] - fwdZ * this.orbitDistance;
+
+                // Smooth exponential glide when engaging/switching target, then rock-solid gimbal lock (zero velocity rubber-band on fast jets/helis!)
+                if (this._trackSettled) {
+                    this.cameraPos[0] = targetCamX;
+                    this.cameraPos[1] = targetCamY;
+                    this.cameraPos[2] = targetCamZ;
+                } else {
+                    const safeTrackDt = Math.min(0.05, Math.max(0.001, frameTime || 0.016));
+                    const lerpFactor = 1.0 - Math.exp(-14.0 * safeTrackDt);
+                    this.cameraPos[0] += (targetCamX - this.cameraPos[0]) * lerpFactor;
+                    this.cameraPos[1] += (targetCamY - this.cameraPos[1]) * lerpFactor;
+                    this.cameraPos[2] += (targetCamZ - this.cameraPos[2]) * lerpFactor;
+                    const remDist = Math.hypot(targetCamX - this.cameraPos[0], targetCamY - this.cameraPos[1], targetCamZ - this.cameraPos[2]);
+                    if (remDist < (trackedIsVehicle ? 1.2 : 0.25)) {
+                        this.cameraPos[0] = targetCamX;
+                        this.cameraPos[1] = targetCamY;
+                        this.cameraPos[2] = targetCamZ;
+                        this._trackSettled = true;
+                    }
+                }
+
                 this.clampPosition();
                 renderNeeded = true;
             } else {
-                let speed = Math.max(200, this.cameraPos[1] * 0.8);
-                if (keysDown.has(16)) speed *= 3.0; // Shift boost
+                let speed = this.cameraSpeed || 200;
+                if (keysDown.has(16))
+                    speed = speed * 3.5;
 
-                if (keysDown.has(87)) { // W (North)
-                    this.cameraPos[2] -= frameTime * speed;
+                if (keysDown.has(87)) { // W
+                    const forward = vec3.scale(vec3.create(), this.getCameraForward(), frameTime * speed);
+                    vec3.add(this.cameraPos, this.cameraPos, forward);
                     renderNeeded = true;
                 }
-                if (keysDown.has(83)) { // S (South)
-                    this.cameraPos[2] += frameTime * speed;
+                if (keysDown.has(83)) { // S
+                    const forward = vec3.scale(vec3.create(), this.getCameraForward(), -frameTime * speed);
+                    vec3.add(this.cameraPos, this.cameraPos, forward);
                     renderNeeded = true;
                 }
-                if (keysDown.has(65)) { // A (West)
-                    this.cameraPos[0] -= frameTime * speed;
+                if (keysDown.has(68)) { // D
+                    const right = vec3.scale(vec3.create(), this.getCameraRight(), frameTime * speed);
+                    vec3.add(this.cameraPos, this.cameraPos, right);
                     renderNeeded = true;
                 }
-                if (keysDown.has(68)) { // D (East)
-                    this.cameraPos[0] += frameTime * speed;
+                if (keysDown.has(65)) { // A
+                    const right = vec3.scale(vec3.create(), this.getCameraRight(), -frameTime * speed);
+                    vec3.add(this.cameraPos, this.cameraPos, right);
+                    renderNeeded = true;
+                }
+                if (keysDown.has(69)) { // E (Up +Y)
+                    this.cameraPos[1] += frameTime * speed;
+                    renderNeeded = true;
+                }
+                if (keysDown.has(81)) { // Q (Down -Y)
+                    this.cameraPos[1] -= frameTime * speed;
                     renderNeeded = true;
                 }
 
                 this.clampPosition();
             }
-        } else if (trackedTargetPos) {
-            let zoomSpeed = 40.0;
-            let rotateSpeed = 80.0;
-            let heightSpeed = 6.0;
-            if (keysDown.has(16)) { // Shift multiplier
-                zoomSpeed *= 3.0;
-                rotateSpeed *= 2.0;
-                heightSpeed *= 3.0;
-            }
-
-            const prevHeightOffset = this.trackedHeightOffset;
-
-            // W: Move closer towards where looking
-            if (keysDown.has(87)) {
-                this.orbitDistance = Math.max(2.0, this.orbitDistance - frameTime * zoomSpeed);
-                renderNeeded = true;
-            }
-            // S: Move back away
-            if (keysDown.has(83)) {
-                this.orbitDistance = Math.min(300.0, this.orbitDistance + frameTime * zoomSpeed);
-                renderNeeded = true;
-            }
-            // A: Orbit left around target
-            if (keysDown.has(65)) {
-                this.cameraYaw -= frameTime * rotateSpeed;
-                this.clampRotation();
-                renderNeeded = true;
-            }
-            // D: Orbit right around target
-            if (keysDown.has(68)) {
-                this.cameraYaw += frameTime * rotateSpeed;
-                this.clampRotation();
-                renderNeeded = true;
-            }
-            // E: Raise vertical orbit target offset
-            if (keysDown.has(69)) {
-                this.trackedHeightOffset = clamp(0.2, this.trackedHeightOffset + frameTime * heightSpeed, 20.0);
-                renderNeeded = true;
-            }
-            // Q: Lower vertical orbit target offset
-            if (keysDown.has(81)) {
-                this.trackedHeightOffset = clamp(0.2, this.trackedHeightOffset - frameTime * heightSpeed, 20.0);
-                renderNeeded = true;
-            }
-
-            if (this.trackedHeightOffset !== prevHeightOffset) {
-                trackedTargetPos[1] += (this.trackedHeightOffset - prevHeightOffset);
-            }
-
-            // Use the exact view forward vector so the tracked target stays centered when orbiting
-            const fwd = this.getCameraForward();
-            const fwdX = fwd[0];
-            const fwdY = fwd[1];
-            const fwdZ = fwd[2];
-
-            // Camera placed at distance along the independent look line of sight
-            const targetCamX = trackedTargetPos[0] - fwdX * this.orbitDistance;
-            const targetCamY = trackedTargetPos[1] - fwdY * this.orbitDistance;
-            const targetCamZ = trackedTargetPos[2] - fwdZ * this.orbitDistance;
-
-            const lerpFactor = Math.min(1.0, frameTime * 16.0);
-            this.cameraPos[0] += (targetCamX - this.cameraPos[0]) * lerpFactor;
-            this.cameraPos[1] += (targetCamY - this.cameraPos[1]) * lerpFactor;
-            this.cameraPos[2] += (targetCamZ - this.cameraPos[2]) * lerpFactor;
-
-            this.clampPosition();
-            renderNeeded = true;
-        } else {
-            let speed = this.cameraSpeed || 200;
-            if (keysDown.has(16))
-                speed = speed * 3.5;
-
-            if (keysDown.has(87)) { // W
-                const forward = vec3.scale(vec3.create(), this.getCameraForward(), frameTime * speed);
-                vec3.add(this.cameraPos, this.cameraPos, forward);
-                renderNeeded = true;
-            }
-            if (keysDown.has(83)) { // S
-                const forward = vec3.scale(vec3.create(), this.getCameraForward(), -frameTime * speed);
-                vec3.add(this.cameraPos, this.cameraPos, forward);
-                renderNeeded = true;
-            }
-            if (keysDown.has(68)) { // D
-                const right = vec3.scale(vec3.create(), this.getCameraRight(), frameTime * speed);
-                vec3.add(this.cameraPos, this.cameraPos, right);
-                renderNeeded = true;
-            }
-            if (keysDown.has(65)) { // A
-                const right = vec3.scale(vec3.create(), this.getCameraRight(), -frameTime * speed);
-                vec3.add(this.cameraPos, this.cameraPos, right);
-                renderNeeded = true;
-            }
-            if (keysDown.has(69)) { // E (Up +Y)
-                this.cameraPos[1] += frameTime * speed;
-                renderNeeded = true;
-            }
-            if (keysDown.has(81)) { // Q (Down -Y)
-                this.cameraPos[1] -= frameTime * speed;
-                renderNeeded = true;
-            }
-
-            this.clampPosition();
         }
 
         // Smooth Optical Zoom (V key = 86)
@@ -601,6 +1023,9 @@ class Renderer3d extends Initializable {
 
     draw() {
         this._updateRenderingSize();
+        if (this.isFirstPersonActive() && !this._fpvInitialized) {
+            this.update1PVCamera(0.016);
+        }
         const gl = this.gl;
 
         // Compute active 1:1 fog state up front so both shadow pass & building culling can use fog-wall culling
@@ -654,6 +1079,9 @@ class Renderer3d extends Initializable {
             skyboxRenderer.draw();
         }
         terrainRenderer.draw();
+        if (typeof roads3dRenderer !== "undefined" && roads3dRenderer.initialized) {
+            roads3dRenderer.draw();
+        }
         if (typeof building3dRenderer !== "undefined" && building3dRenderer.initialized) {
             building3dRenderer.draw();
         }
@@ -697,13 +1125,19 @@ class Renderer3d extends Initializable {
         const useSsao = this._renderSsaoPass();
 
         // 3. Pass 2: Fullscreen Post-Process (SSAO + Volumetric Cone + Selection Outline)
-        //    If FXAA is active, render into postFbo and finish with Pass 3 (FXAA -> screen).
-        if (wantFxaa) {
+        //    If Bloom or FXAA is active, render into postFbo first.
+        const wantBloom = (typeof options_3dBloom !== "undefined" && !!options_3dBloom);
+        if (wantFxaa || wantBloom) {
             this._ensurePostFbo(this.canvas.width, this.canvas.height);
         }
+        if (wantBloom) {
+            this._ensureBloomFbos(this.canvas.width, this.canvas.height);
+        }
+        const useBloom = wantBloom && this.postFboReady && this.bloomFboReady && !!this.bloomCompositeProgram;
         const useFxaa = wantFxaa && this.postFboReady && !!this.fxaaProgram;
+        const usePostFbo = useBloom || useFxaa;
 
-        gl.bindFramebuffer(gl.FRAMEBUFFER, useFxaa ? this.postFbo : null);
+        gl.bindFramebuffer(gl.FRAMEBUFFER, usePostFbo ? this.postFbo : null);
         gl.viewport(0, 0, this.canvas.width, this.canvas.height);
         gl.disable(gl.DEPTH_TEST);
         gl.disable(gl.BLEND);
@@ -716,10 +1150,46 @@ class Renderer3d extends Initializable {
             smoke3dRenderer.draw(useFog, fogCfg, fogOrigin);
         }
 
+        // 3c. Additive Jet Afterburner Plumes (rendered post-SSAO so additive glow is crisp and unclipped by MRT)
+        if (typeof entities3dRenderer !== "undefined" && entities3dRenderer.initialized && typeof entities3dRenderer.drawAfterburnersPass === "function") {
+            entities3dRenderer.drawAfterburnersPass();
+        }
+
+        // 3d. Optional PR Weather Particles (Rain / Snow / Desert Dust)
+        if (typeof weather3dRenderer !== "undefined" && weather3dRenderer.initialized) {
+            weather3dRenderer.draw();
+        }
+
+        // 3e. Optional PR Selective Bloom + Atmospheric Sun Glare + Subtle Tone Mapping (PostProduction_nv3x.fx)
+        let finalColorTex = this.postColorTex;
+        if (useBloom) {
+            const bloomTargetFbo = (useFxaa && this.bloomOutFbo) ? this.bloomOutFbo : null;
+            this._renderBloomPass(bloomTargetFbo);
+            if (useFxaa && this.bloomOutTex) {
+                finalColorTex = this.bloomOutTex;
+            }
+        }
+
         if (useFxaa) {
             gl.bindFramebuffer(gl.FRAMEBUFFER, null);
             gl.viewport(0, 0, this.canvas.width, this.canvas.height);
-            this._renderFxaaPass();
+            this._renderFxaaPass(finalColorTex);
+        }
+
+        // Keep wind & weather shaders animating smoothly even while demo playback is paused
+        const weatherActive = (typeof weather3dRenderer !== "undefined" && typeof weather3dRenderer.isActiveOnCurrentMap === "function" && weather3dRenderer.isActiveOnCurrentMap());
+        const envAnimOn = ((typeof options_3dWind !== "undefined" && !!options_3dWind) || weatherActive);
+        if (envAnimOn && (typeof isPlaying === "undefined" || !isPlaying) && !this._envAnimPending) {
+            this._envAnimPending = true;
+            requestAnimationFrame(() => {
+                this._envAnimPending = false;
+                if (typeof is3DMode !== "undefined" && is3DMode && typeof requestUpdate === "function") {
+                    const wAct = (typeof weather3dRenderer !== "undefined" && typeof weather3dRenderer.isActiveOnCurrentMap === "function" && weather3dRenderer.isActiveOnCurrentMap());
+                    if ((typeof options_3dWind !== "undefined" && options_3dWind) || wAct) {
+                        requestUpdate();
+                    }
+                }
+            });
         }
 
         // 4. Overlays & HUD on top of final image
@@ -1395,8 +1865,8 @@ class Renderer3d extends Initializable {
 
         gl.uniformMatrix4fv(this.fs_uInvViewProj, false, invViewProj);
         gl.uniform3f(this.fs_uCamPos, this.cameraPos[0], this.cameraPos[1], this.cameraPos[2]);
-        gl.uniform1f(this.fs_uCamNear, 0.25);
-        gl.uniform1f(this.fs_uCamFar, 20000.0);
+        gl.uniform1f(this.fs_uCamNear, this.getCamNear());
+        gl.uniform1f(this.fs_uCamFar, this.getCamFar());
 
         // Textures: unit 0 = sceneColorTex, unit 1 = sceneDepthTex, unit 2 = eyeDepthTex, unit 3 = selectionMaskTex, unit 4 = ssaoTex
         gl.activeTexture(gl.TEXTURE0);
@@ -2062,8 +2532,8 @@ class Renderer3d extends Initializable {
         gl.bindTexture(gl.TEXTURE_2D, this.sceneDepthTex);
         gl.uniform1i(this.ssaoBlur_uDepthTex, 1);
         gl.uniform2f(this.ssaoBlur_uTexelSize, 1.0 / this.ssaoWidth, 1.0 / this.ssaoHeight);
-        gl.uniform1f(this.ssaoBlur_uCamNear, 0.25);
-        gl.uniform1f(this.ssaoBlur_uCamFar, 20000.0);
+        gl.uniform1f(this.ssaoBlur_uCamNear, this.getCamNear());
+        gl.uniform1f(this.ssaoBlur_uCamFar, this.getCamFar());
         if (this.ssaoBlur_uDepthSharpness !== null) {
             gl.uniform1f(this.ssaoBlur_uDepthSharpness, (this.ssaoQuality === 0) ? 0.95 : 2.6);
         }
@@ -2357,13 +2827,306 @@ class Renderer3d extends Initializable {
         this.fxaa_uInvScreenSize = gl.getUniformLocation(p, "u_invScreenSize");
     }
 
-    _renderFxaaPass() {
+    // =========================================================================
+    // PR Selective Bloom + Atmospheric Sun Glare + Subtle Tone Mapping
+    // (PostProduction_nv3x.fx style, 1/4-res separable Gaussian blur)
+    // =========================================================================
+    _initBloomPass() {
         const gl = this.gl;
-        if (!gl || !this.fxaaProgram || !this.postColorTex) return;
+        if (!gl) return;
+
+        const vs = `#version 300 es
+            in vec2 a_position;
+            out vec2 v_uv;
+            void main() {
+                v_uv = a_position * 0.5 + 0.5;
+                gl_Position = vec4(a_position, 0.0, 1.0);
+            }
+        `;
+
+        const brightFs = `#version 300 es
+            precision highp float;
+            in vec2 v_uv;
+            out vec4 fragColor;
+
+            uniform sampler2D u_colorTex;
+            uniform vec2 u_texelSize;
+
+            void main() {
+                // 4-tap box downsample to prevent firefly flicker
+                vec3 c = texture(u_colorTex, v_uv + vec2(-0.5, -0.5) * u_texelSize).rgb
+                       + texture(u_colorTex, v_uv + vec2( 0.5, -0.5) * u_texelSize).rgb
+                       + texture(u_colorTex, v_uv + vec2(-0.5,  0.5) * u_texelSize).rgb
+                       + texture(u_colorTex, v_uv + vec2( 0.5,  0.5) * u_texelSize).rgb;
+                c *= 0.25;
+                // PR PostProduction_nv3x.fx exact cutoff = 0.80
+                float luma = dot(c, vec3(0.2126, 0.7152, 0.0722));
+                float maxCh = max(c.r, max(c.g, c.b));
+                float energy = mix(luma, maxCh, 0.35);
+                float excess = max(energy - 0.80, 0.0) / 0.20;
+                float weight = smoothstep(0.0, 1.0, excess);
+                fragColor = vec4(c * weight, 1.0);
+            }
+        `;
+
+        const blurFs = `#version 300 es
+            precision highp float;
+            in vec2 v_uv;
+            out vec4 fragColor;
+
+            uniform sampler2D u_tex;
+            uniform vec2 u_dir;
+
+            void main() {
+                // 9-tap separable Gaussian blur
+                vec3 sum = texture(u_tex, v_uv).rgb * 0.227027;
+                sum += texture(u_tex, v_uv + u_dir * 1.384615).rgb * 0.316216;
+                sum += texture(u_tex, v_uv - u_dir * 1.384615).rgb * 0.316216;
+                sum += texture(u_tex, v_uv + u_dir * 3.230769).rgb * 0.070270;
+                sum += texture(u_tex, v_uv - u_dir * 3.230769).rgb * 0.070270;
+                fragColor = vec4(sum, 1.0);
+            }
+        `;
+
+        const compFs = `#version 300 es
+            precision highp float;
+            in vec2 v_uv;
+            out vec4 fragColor;
+
+            uniform sampler2D u_sceneTex;
+            uniform sampler2D u_bloomTex;
+            uniform sampler2D u_depthTex;
+            uniform vec2 u_sunScreenPos;
+            uniform float u_sunVisible;
+            uniform float u_aspect;
+
+            // Exact PR RealityDirectXTK.fxh AMD Resolve Tonemap
+            vec3 tonemapAMDResolve(vec3 x) {
+                float m = max(max(x.r, x.g), x.b);
+                return (x / (m + 1.0)) * 2.0;
+            }
+
+            void main() {
+                vec3 base = texture(u_sceneTex, v_uv).rgb;
+                vec3 bloom = texture(u_bloomTex, v_uv).rgb;
+
+                // Exact PR PostProduction_nv3x.fx Glow blend: SrcBlend = SRCCOLOR, DestBlend = ONE
+                // (bloom * bloom keeps bright clouds subtle while hot flames/sun/afterburners glow crisply)
+                vec3 col = base + (bloom * bloom) * 0.48;
+
+                // Subtle atmospheric sun glare only when looking closely toward open sun
+                if (u_sunVisible > 0.005) {
+                    vec2 d = v_uv - u_sunScreenPos;
+                    d.x *= u_aspect;
+                    float r = length(d);
+                    float halo = exp(-r * 6.5) * 0.11 + exp(-r * 22.0) * 0.14;
+                    float sunDepth = texture(u_depthTex, clamp(u_sunScreenPos, 0.005, 0.995)).r;
+                    float skyOpen = smoothstep(0.996, 0.9997, sunDepth);
+                    col += vec3(1.0, 0.94, 0.82) * (halo * u_sunVisible * skyOpen);
+                }
+
+                // Exact PR RealityDirectXTK.fxh AMD Resolve tonemap (blended gently to keep PR colors faithful)
+                vec3 tm = tonemapAMDResolve(col);
+                col = clamp(mix(col, tm, 0.45), 0.0, 1.0);
+
+                fragColor = vec4(col, 1.0);
+            }
+        `;
+
+        const compile = (fsSrc) => {
+            const p = gl.createProgram();
+            gl.attachShader(p, this.loadShader(gl.VERTEX_SHADER, vs));
+            gl.attachShader(p, this.loadShader(gl.FRAGMENT_SHADER, fsSrc));
+            gl.linkProgram(p);
+            if (!gl.getProgramParameter(p, gl.LINK_STATUS)) {
+                console.error("Bloom shader link failed:", gl.getProgramInfoLog(p));
+                return null;
+            }
+            return p;
+        };
+
+        this.bloomBrightProgram = compile(brightFs);
+        this.bloomBlurProgram = compile(blurFs);
+        this.bloomCompositeProgram = compile(compFs);
+
+        if (this.bloomBrightProgram) {
+            this.bb_aPos = gl.getAttribLocation(this.bloomBrightProgram, "a_position");
+            this.bb_uColorTex = gl.getUniformLocation(this.bloomBrightProgram, "u_colorTex");
+            this.bb_uTexelSize = gl.getUniformLocation(this.bloomBrightProgram, "u_texelSize");
+        }
+        if (this.bloomBlurProgram) {
+            this.bl_aPos = gl.getAttribLocation(this.bloomBlurProgram, "a_position");
+            this.bl_uTex = gl.getUniformLocation(this.bloomBlurProgram, "u_tex");
+            this.bl_uDir = gl.getUniformLocation(this.bloomBlurProgram, "u_dir");
+        }
+        if (this.bloomCompositeProgram) {
+            this.bc_aPos = gl.getAttribLocation(this.bloomCompositeProgram, "a_position");
+            this.bc_uSceneTex = gl.getUniformLocation(this.bloomCompositeProgram, "u_sceneTex");
+            this.bc_uBloomTex = gl.getUniformLocation(this.bloomCompositeProgram, "u_bloomTex");
+            this.bc_uDepthTex = gl.getUniformLocation(this.bloomCompositeProgram, "u_depthTex");
+            this.bc_uSunScreenPos = gl.getUniformLocation(this.bloomCompositeProgram, "u_sunScreenPos");
+            this.bc_uSunVisible = gl.getUniformLocation(this.bloomCompositeProgram, "u_sunVisible");
+            this.bc_uAspect = gl.getUniformLocation(this.bloomCompositeProgram, "u_aspect");
+        }
+        this.bloomFboReady = false;
+    }
+
+    _ensureBloomFbos(w, h) {
+        const gl = this.gl;
+        if (!gl) return;
+        w = Math.max(4, w);
+        h = Math.max(4, h);
+        const bw = Math.max(2, Math.floor(w / 4));
+        const bh = Math.max(2, Math.floor(h / 4));
+        if (this.bloomFboA && this.bloomWidth === bw && this.bloomHeight === bh && this.bloomOutWidth === w && this.bloomOutHeight === h) {
+            return;
+        }
+        if (!this.bloomFboA) {
+            this.bloomFboA = gl.createFramebuffer();
+            this.bloomTexA = gl.createTexture();
+            this.bloomFboB = gl.createFramebuffer();
+            this.bloomTexB = gl.createTexture();
+            this.bloomOutFbo = gl.createFramebuffer();
+            this.bloomOutTex = gl.createTexture();
+        }
+        const setup = (fbo, tex, tw, th) => {
+            gl.bindTexture(gl.TEXTURE_2D, tex);
+            gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, tw, th, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+            gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+            gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
+            return gl.checkFramebufferStatus(gl.FRAMEBUFFER) === gl.FRAMEBUFFER_COMPLETE;
+        };
+        const okA = setup(this.bloomFboA, this.bloomTexA, bw, bh);
+        const okB = setup(this.bloomFboB, this.bloomTexB, bw, bh);
+        const okO = setup(this.bloomOutFbo, this.bloomOutTex, w, h);
+        gl.bindTexture(gl.TEXTURE_2D, null);
+        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+        this.bloomWidth = bw;
+        this.bloomHeight = bh;
+        this.bloomOutWidth = w;
+        this.bloomOutHeight = h;
+        this.bloomFboReady = okA && okB && okO;
+    }
+
+    _renderBloomPass(targetFbo) {
+        const gl = this.gl;
+        if (!gl || !this.bloomFboReady || !this.bloomBrightProgram || !this.bloomBlurProgram || !this.bloomCompositeProgram) return;
+
+        const W = this.canvas.width;
+        const H = this.canvas.height;
+        const bw = this.bloomWidth;
+        const bh = this.bloomHeight;
+
+        gl.disable(gl.DEPTH_TEST);
+        gl.disable(gl.BLEND);
+        gl.bindBuffer(gl.ARRAY_BUFFER, this.fsQuadVbo);
+
+        // 1. Bright-pass + 1/4-res downsample (postColorTex -> bloomFboA)
+        gl.bindFramebuffer(gl.FRAMEBUFFER, this.bloomFboA);
+        gl.viewport(0, 0, bw, bh);
+        gl.useProgram(this.bloomBrightProgram);
+        gl.activeTexture(gl.TEXTURE0);
+        gl.bindTexture(gl.TEXTURE_2D, this.postColorTex);
+        gl.uniform1i(this.bb_uColorTex, 0);
+        gl.uniform2f(this.bb_uTexelSize, 1.0 / Math.max(1, W), 1.0 / Math.max(1, H));
+        gl.enableVertexAttribArray(this.bb_aPos);
+        gl.vertexAttribPointer(this.bb_aPos, 2, gl.FLOAT, false, 0, 0);
+        gl.drawArrays(gl.TRIANGLES, 0, 3);
+        gl.disableVertexAttribArray(this.bb_aPos);
+
+        // 2. Separable Gaussian Blur H (bloomTexA -> bloomFboB)
+        gl.bindFramebuffer(gl.FRAMEBUFFER, this.bloomFboB);
+        gl.viewport(0, 0, bw, bh);
+        gl.useProgram(this.bloomBlurProgram);
+        gl.activeTexture(gl.TEXTURE0);
+        gl.bindTexture(gl.TEXTURE_2D, this.bloomTexA);
+        gl.uniform1i(this.bl_uTex, 0);
+        gl.uniform2f(this.bl_uDir, 1.15 / bw, 0.0);
+        gl.enableVertexAttribArray(this.bl_aPos);
+        gl.vertexAttribPointer(this.bl_aPos, 2, gl.FLOAT, false, 0, 0);
+        gl.drawArrays(gl.TRIANGLES, 0, 3);
+        gl.disableVertexAttribArray(this.bl_aPos);
+
+        // 3. Separable Gaussian Blur V (bloomTexB -> bloomFboA)
+        gl.bindFramebuffer(gl.FRAMEBUFFER, this.bloomFboA);
+        gl.viewport(0, 0, bw, bh);
+        gl.activeTexture(gl.TEXTURE0);
+        gl.bindTexture(gl.TEXTURE_2D, this.bloomTexB);
+        gl.uniform1i(this.bl_uTex, 0);
+        gl.uniform2f(this.bl_uDir, 0.0, 1.15 / bh);
+        gl.enableVertexAttribArray(this.bl_aPos);
+        gl.vertexAttribPointer(this.bl_aPos, 2, gl.FLOAT, false, 0, 0);
+        gl.drawArrays(gl.TRIANGLES, 0, 3);
+        gl.disableVertexAttribArray(this.bl_aPos);
+
+        // Compute sun screen position for atmospheric glare
+        let sunVis = 0.0;
+        let sunU = 0.5, sunV = 0.5;
+        if (!this.isTopDown) {
+            const sunDir = this.getMapSunDirection();
+            const camFwd = this.getCameraForward();
+            const align = camFwd[0] * sunDir[0] + camFwd[1] * sunDir[1] + camFwd[2] * sunDir[2];
+            if (align > 0.25) {
+                const viewMat = this.getCurrentViewMatrix();
+                const projMat = this.getCurrentProjectionMatrix();
+                const sunFar = [
+                    this.cameraPos[0] + sunDir[0] * 10000.0,
+                    this.cameraPos[1] + sunDir[1] * 10000.0,
+                    this.cameraPos[2] + sunDir[2] * 10000.0,
+                    1.0
+                ];
+                const vp = mat4.multiply(mat4.create(), projMat, viewMat);
+                const clip = vec4.transformMat4(vec4.create(), sunFar, vp);
+                if (clip[3] > 0.001) {
+                    sunU = (clip[0] / clip[3]) * 0.5 + 0.5;
+                    sunV = (clip[1] / clip[3]) * 0.5 + 0.5;
+                    if (sunU >= -0.2 && sunU <= 1.2 && sunV >= -0.2 && sunV <= 1.2) {
+                        sunVis = Math.max(0.0, Math.min(1.0, (align - 0.25) / 0.65));
+                    }
+                }
+            }
+        }
+
+        // 4. Composite (postColorTex + bloomTexA + Sun Glare + Tone Mapping -> targetFbo)
+        gl.bindFramebuffer(gl.FRAMEBUFFER, targetFbo || null);
+        gl.viewport(0, 0, W, H);
+        gl.useProgram(this.bloomCompositeProgram);
+        gl.activeTexture(gl.TEXTURE0);
+        gl.bindTexture(gl.TEXTURE_2D, this.postColorTex);
+        gl.uniform1i(this.bc_uSceneTex, 0);
+        gl.activeTexture(gl.TEXTURE1);
+        gl.bindTexture(gl.TEXTURE_2D, this.bloomTexA);
+        gl.uniform1i(this.bc_uBloomTex, 1);
+        gl.activeTexture(gl.TEXTURE2);
+        gl.bindTexture(gl.TEXTURE_2D, this.sceneDepthTex);
+        gl.uniform1i(this.bc_uDepthTex, 2);
+        gl.uniform2f(this.bc_uSunScreenPos, sunU, sunV);
+        gl.uniform1f(this.bc_uSunVisible, sunVis);
+        gl.uniform1f(this.bc_uAspect, W / Math.max(1, H));
+        gl.enableVertexAttribArray(this.bc_aPos);
+        gl.vertexAttribPointer(this.bc_aPos, 2, gl.FLOAT, false, 0, 0);
+        gl.drawArrays(gl.TRIANGLES, 0, 3);
+        gl.disableVertexAttribArray(this.bc_aPos);
+
+        for (let u = 0; u < 3; u++) {
+            gl.activeTexture(gl.TEXTURE0 + u);
+            gl.bindTexture(gl.TEXTURE_2D, null);
+        }
+        gl.activeTexture(gl.TEXTURE0);
+    }
+
+    _renderFxaaPass(sourceTex) {
+        const gl = this.gl;
+        const tex = sourceTex || this.postColorTex;
+        if (!gl || !this.fxaaProgram || !tex) return;
 
         gl.useProgram(this.fxaaProgram);
         gl.activeTexture(gl.TEXTURE0);
-        gl.bindTexture(gl.TEXTURE_2D, this.postColorTex);
+        gl.bindTexture(gl.TEXTURE_2D, tex);
         gl.uniform1i(this.fxaa_uColorTex, 0);
         gl.uniform2f(this.fxaa_uInvScreenSize, 1.0 / Math.max(1, this.canvas.width), 1.0 / Math.max(1, this.canvas.height));
 
